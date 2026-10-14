@@ -7,11 +7,11 @@ Raspberry Pi Pico用のPico Copterファームウェアを、GitHub Actionsで�
 
 - ベース: [pico-copter-uf2-builder](https://github.com/temesotejam/pico-copter-uf2-builder)
 - 変更の移植元: [i-26](https://github.com/temesotejam/i-26)
-- **例外: モータミキシング（`control.cpp` の `FR_duty`, `FL_duty`, `RR_duty`, `RL_duty`）はベース版を厳密に維持**。Yaw符号に加え、0.25 と 0.0901 の係数も元のままです。
+- **唯一の制御上の例外: モータミキシングの `R_com`（Yaw補正）符号だけは元の Pico Copter に合わせています。** PID・各軸の補正量・ミキシング係数・最終倍率 `0.9` は i-26 に合わせています。
 - 移植する変更: PIDパラメータ、EKF呼び出し、PWM GPIO設定・IRQ処理・出力競合検査、SBUS入力範囲など。
 - `i26-pico-firmware` は今回の移植元ではありません。ToF、RGB LEDなどの追加機能は含みません。
 
-### 配線と制御上の重要事項
+### 現行基板の配線（i-26 準拠）
 
 | 出力 | 元のPico Copter | このリポジトリ（i-26準拠） |
 |---|---:|---:|
@@ -21,7 +21,9 @@ Raspberry Pi Pico用のPico Copterファームウェアを、GitHub Actionsで�
 | Front Right | GPIO 5 | **GPIO 15** |
 | Servo | GPIO 6 | GPIO 6 |
 
-**注意:** i-26 の `README.md` には FL/FR = GPIO 4/5 と記載されていますが、実コード `pwm.hpp` は 14/15 です。このリポジトリではユーザー指定どおり実コードの14/15を採用します。実機の配線とモータ方向・制御ゲインを確認してください。
+**現行基板は i-26 の実装ピン配置です。** FL/FR は GPIO 14/15 を使用し、旧基板の GPIO 4/5 には戻しません。i-26 側の README に書かれた FL/FR=GPIO 4/5 は実装と一致していません。
+
+ミキシングの `P_com` / `Q_com` の符号・構造は i-26 と同じで、`R_com` の符号のみ Pico Copter のものです。4モータとも計算式の最終倍率は **`0.9`** で、旧版の `*0.25` と `*0.0901` は使用しません。
 
 プロペラを外して初期動作を確認してください。コードの移植は飛行安全性やビルドの成功を保証するものではありません。
 
