@@ -7,8 +7,8 @@
 .wrap_target
 bitloop:
     out x, 1        side 0 [1] ; 2 cycles
-    jmp !x zero     side 1 [2] ; 3 cycles
+    jmp !x bit_zero     side 1 [2] ; 3 cycles
     jmp bitloop     side 1 [2] ; 3 cycles; 1: 6 high / 8 total
-zero:
+bit_zero:
     nop             side 0 [2] ; 3 cycles; 0: 3 high / 8 total
 .wrap
