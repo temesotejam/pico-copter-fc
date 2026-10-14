@@ -6,6 +6,7 @@
 #include "control.hpp"
 #include "sbus_parser.hpp"
 #include "flight_log_ring.hpp"
+#include "log_capture_gate.hpp"
 #include "pico/sync.h"
 
 //Sensor data
@@ -48,12 +49,13 @@ Matrix<float, 6, 6> R;// = MatrixXf::Identity(6, 6)*0.0001;
 Matrix<float, 7 ,6> G;
 Matrix<float, 3 ,1> Beta;
 
-// Flight log records 38 floats at 100 Hz, retaining the newest 1263 samples.
+// CH5-gated, nominal 100 Hz RAM recorder: retain the newest 10 seconds.
+// 1000 rows x 38 floats = 152,000 bytes of static RAM.
 constexpr uint32_t DATANUM=38;
-constexpr uint32_t LOGDATANUM=48000;
-constexpr uint32_t LOG_ROWS=LOGDATANUM/DATANUM;
-static_assert(LOG_ROWS==1263, "Flight log rows must be complete");
+constexpr uint32_t LOG_ROWS=1000;
+static_assert(LOG_ROWS*DATANUM*sizeof(float)==152000, "Unexpected log RAM size");
 FlightLogRing<LOG_ROWS, DATANUM> flight_log;
+Ch5CaptureGate log_capture_gate;
 critical_section_t flight_log_guard;
 volatile uint8_t Logflag=0;
 volatile uint8_t Logoutputflag=0;
@@ -63,7 +65,7 @@ uint64_t log_output_first_sample=0;
 bool log_output_started=false;
 
 //State Machine
-uint8_t LockMode=0;
+volatile uint8_t LockMode=0;
 namespace {
 sbus::ReArmLatch rc_safety;
 uint32_t last_seen_failsafe_event = 0;
@@ -93,7 +95,7 @@ void output_sensor_raw_data(void);
 void kalman_filter(void);
 void logging(void);
 void flight_log_freeze(void);
-void flight_log_reset(void);
+void flight_log_arm(void);
 void motor_stop(void);
 uint8_t lock_com(void);
 bool arm_gesture_held(void);
@@ -301,7 +303,7 @@ void loop_400Hz(void)
     {
       if(lock_com()==0)
       {
-        flight_log_reset(); // Start a fresh rolling recording on each arm.
+        flight_log_arm(); // Require a CH5 OFF-then-ON transition after arming.
         LockMode=2;//Enable Flight
         Arm_flag=2;
       }
@@ -619,27 +621,57 @@ void flight_log_init(void)
 void flight_log_freeze(void)
 {
   critical_section_enter_blocking(&flight_log_guard);
+  log_capture_gate.stop();
   flight_log.freeze();
   critical_section_exit(&flight_log_guard);
   Logflag=0;
 }
 
-void flight_log_reset(void)
+// Arming does not erase the most recent capture or begin recording.
+// The first CH5 OFF->ON action during this arm starts a new log session.
+void flight_log_arm(void)
 {
   critical_section_enter_blocking(&flight_log_guard);
-  flight_log.reset();
+  log_capture_gate.on_arm();
   critical_section_exit(&flight_log_guard);
-  log_output_position=0;
-  log_output_count=0;
-  log_output_first_sample=0;
-  log_output_started=false;
   Logflag=0;
 }
 
 void logging(void)
 {
-  // Runs from the 100 Hz core-1 attitude loop. Record automatically while armed.
-  if(Arm_flag!=2) return;
+  // The attitude loop still runs at 100 Hz, but constructing/storing the
+  // 38-field row happens ONLY while armed AND CH5 is in record position.
+  if(Arm_flag!=2 || LockMode!=2) return;
+
+  const bool ch5_on=Chdata[4]>(CH5MAX+CH5MIN)*0.5;
+  bool capture=false;
+  critical_section_enter_blocking(&flight_log_guard);
+  if(Arm_flag==2 && LockMode==2)
+  {
+    const Ch5CaptureGate::Action action=log_capture_gate.update(ch5_on);
+    if(action==Ch5CaptureGate::Action::Start)
+    {
+      // A new CH5 activation deliberately replaces the previous capture.
+      flight_log.reset(); // Constant-time metadata reset: no large memset.
+      capture=true;
+    }
+    else if(action==Ch5CaptureGate::Action::Capture)
+    {
+      capture=true;
+    }
+    else if(action==Ch5CaptureGate::Action::Stop)
+    {
+      // CH5 OFF preserves the newest 10 seconds for later USB export.
+      flight_log.freeze();
+    }
+  }
+  critical_section_exit(&flight_log_guard);
+  if(!capture)
+  {
+    if(!ch5_on) Logflag=0;
+    return;
+  }
+
   float row[DATANUM];
   row[0] = Xe(0,0);                  //1
   row[1] = Xe(1,0);                  //2
@@ -683,7 +715,8 @@ void logging(void)
   // Publish a complete 38-field sample atomically with respect to the
   // core-0 disarm/freeze and USB export operations.
   critical_section_enter_blocking(&flight_log_guard);
-  const bool saved=Arm_flag==2 && flight_log.append(row);
+  const bool saved=Arm_flag==2 && LockMode==2 && log_capture_gate.recording()
+      && Chdata[4]>(CH5MAX+CH5MIN)*0.5 && flight_log.append(row);
   critical_section_exit(&flight_log_guard);
   if(saved) Logflag=1;
 }
@@ -710,10 +743,10 @@ void log_output(void)
     phi_pid.printGain();
     printf("#Pitch angle PID gain\n");
     theta_pid.printGain();
-    printf("#Flight log: 100 Hz, 38 fields, %lu/%lu samples, oldest first\n",
+    printf("#CH5 flight log: 100 Hz nominal, 38 fields, %lu/%lu samples, oldest first\n",
            static_cast<unsigned long>(log_output_count),
            static_cast<unsigned long>(LOG_ROWS));
-    printf("#time_s is nominal elapsed time since the start of this flight\n");
+    printf("#time_s is nominal elapsed time since the latest CH5 record start\n");
   }
   if(log_output_position<log_output_count)
   {
@@ -734,7 +767,7 @@ void log_output(void)
   }
   printf("#Flight log export complete: %lu samples\n",
          static_cast<unsigned long>(log_output_position));
-  // Keep the frozen recording available for another export until the next arm.
+  // Keep the frozen recording available until a new CH5 ON starts a capture.
   Arm_flag=3;
   Logoutputflag=0;
   LockMode=0;

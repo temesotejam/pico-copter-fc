@@ -41,9 +41,9 @@ int main() {
     assert(ring.read_oldest_first(0, row) && row[0] == 50 && row[1] == 51);
     assert(!ring.read_oldest_first(1, row));
 
-    // Flight-sized capacity is precisely whole 38-field samples.
-    FlightLogRing<48000 / 38, 38>* real_type = nullptr;
+    // Production CH5 recorder holds exactly 1000 whole 38-field samples.
+    FlightLogRing<1000, 38>* real_type = nullptr;
     (void)real_type;
-    static_assert(48000 / 38 == 1263, "Unexpected recording duration");
+    static_assert(1000 * 38 * sizeof(float) == 152000, "Unexpected RAM size");
     puts("FlightLogRing partial/full/wrap/freeze/reset tests passed");
 }

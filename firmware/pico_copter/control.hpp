@@ -31,7 +31,7 @@ void log_output(void);
 void flight_log_init(void);
 
 //グローバル変数
-extern uint8_t LockMode;
+extern volatile uint8_t LockMode;
 extern volatile bool rc_failsafe_latched;
 extern volatile uint8_t Logoutputflag;
 
