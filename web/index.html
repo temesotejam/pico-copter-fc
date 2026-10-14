@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Pico Copter UF2 Builder</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <p class="eyebrow">Raspberry Pi Pico</p>
+      <h1>Pico Copter UF2 Builder</h1>
+      <p>GitHub Actionsで生成した最新の<code>pico_copter.uf2</code>を配布します。</p>
+    </header>
+
+    <section class="card">
+      <h2>最新ビルド</h2>
+      <p id="status">ビルド情報を取得しています…</p>
+      <p id="description" class="muted"></p>
+      <dl class="metadata">
+        <div><dt>対象</dt><dd id="board">—</dd></div>
+        <div><dt>ファイル</dt><dd id="filename">—</dd></div>
+        <div><dt>サイズ</dt><dd id="size">—</dd></div>
+        <div><dt>SHA-256</dt><dd id="sha256">—</dd></div>
+        <div><dt>ソース</dt><dd id="source-commit">—</dd></div>
+        <div><dt>Pico SDK</dt><dd id="sdk">—</dd></div>
+        <div><dt>Eigen</dt><dd id="eigen">—</dd></div>
+        <div><dt>ビルド日時</dt><dd id="built-at">—</dd></div>
+      </dl>
+      <a id="download" class="button disabled" aria-disabled="true">UF2をダウンロード</a>
+    </section>
+
+    <section class="card">
+      <h2>書き込み</h2>
+      <ol>
+        <li>Picoの<code>BOOTSEL</code>を押したままUSB接続します。</li>
+        <li>表示された<code>RPI-RP2</code>ドライブへUF2をコピーします。</li>
+        <li>コピー後、Picoが自動的に再起動します。</li>
+      </ol>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
