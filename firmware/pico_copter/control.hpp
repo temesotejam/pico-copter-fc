@@ -31,6 +31,7 @@ void log_output(void);
 
 //グローバル変数
 extern uint8_t LockMode;
+extern volatile bool rc_failsafe_latched;
 extern volatile uint8_t Logoutputflag;
 
 class PID

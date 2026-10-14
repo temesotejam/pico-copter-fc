@@ -139,6 +139,14 @@ jobs:
             ccache --set-config=compression=true
           CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache" ccache --zero-stats
 
+      - name: Test SBUS parser and link recovery
+        shell: bash
+        run: |
+          set -euxo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
+            firmware/pico_copter/tests/test_sbus.cpp -o /tmp/sbus-test
+          /tmp/sbus-test
+
       - name: Configure Pico Copter
         shell: bash
         run: |

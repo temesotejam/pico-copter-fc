@@ -4,6 +4,7 @@
 
 
 #include "control.hpp"
+#include "sbus_parser.hpp"
 
 //Sensor data
 float Ax,Ay,Az,Wp,Wq,Wr,Mx,My,Mz,Mx0,My0,Mz0,Mx_ave,My_ave,Mz_ave;
@@ -56,6 +57,13 @@ float Logdata[LOGDATANUM]={0.0};
 
 //State Machine
 uint8_t LockMode=0;
+namespace {
+sbus::ReArmLatch rc_safety;
+uint32_t last_seen_failsafe_event = 0;
+uint8_t arm_gesture_counter = 0;
+uint8_t arm_gesture_state = 0;
+}
+volatile bool rc_failsafe_latched = true;
 float Disable_duty =0.10;
 float Flight_duty  =0.18;//0.2/////////////////
 uint8_t OverG_flag = 0;
@@ -79,6 +87,8 @@ void kalman_filter(void);
 void logging(void);
 void motor_stop(void);
 uint8_t lock_com(void);
+bool arm_gesture_held(void);
+void reset_arm_gesture(void);
 uint8_t logdata_out_com(void);
 void printPQR(void);
 
@@ -91,7 +101,34 @@ void loop_400Hz(void)
 {
   static uint8_t led=1;
   S_time=time_us_32();
-  
+
+  // Check RC health every 2.5 ms, before any state/actuator decisions.
+  // Communication recovery never returns straight into the armed state.
+  const RadioStatus link = radio_update();
+  const bool new_failsafe_event = link.failsafe_count != last_seen_failsafe_event;
+  last_seen_failsafe_event = link.failsafe_count;
+  const bool rc_allowed = rc_safety.update(
+      link.healthy, new_failsafe_event, Chdata[2] <= CH3MIN + 80,
+      !arm_gesture_held());
+  rc_failsafe_latched = !rc_allowed;
+  if (!rc_allowed) {
+    motor_stop(); // Sends the ESC minimum command, not a power disconnect.
+    if (Arm_flag == 2 || Arm_flag == 4) {
+      Arm_flag = 3;
+      Logoutputflag = 0;
+    }
+    LockMode = 0;
+    reset_arm_gesture();
+    Pref = Qref = Rref = 0.0f;
+    p_pid.reset();
+    q_pid.reset();
+    r_pid.reset();
+    phi_pid.reset();
+    theta_pid.reset();
+    psi_pid.reset();
+    gpio_put(LED_PIN, 1);
+    return;
+  }
 
   if (Arm_flag==0)
   {
@@ -314,28 +351,36 @@ void control_init(void)
   //psi_pid.set_parameter  ( 9.0256, 0.11, 0.0034,  0.01, 0.01);
 }
 
+bool arm_gesture_held(void)
+{
+  return Chdata[2] < CH3MIN+80
+      && Chdata[0] > CH1MAX-80
+      && Chdata[3] < CH4MIN+80
+      && Chdata[1] > CH2MAX-80;
+}
+
+void reset_arm_gesture(void)
+{
+  arm_gesture_counter = 0;
+  arm_gesture_state = 0;
+}
+
 uint8_t lock_com(void)
 {
-  static uint8_t chatta=0,state=0;
-  if( Chdata[2]<CH3MIN+80 
-   && Chdata[0]>CH1MAX-80
-   && Chdata[3]<CH4MIN+80 
-   && Chdata[1]>CH2MAX-80)
-  { 
-    chatta++;
-    if(chatta>50){
-      chatta=50;
-      state=1;
+  if (arm_gesture_held())
+  {
+    if (arm_gesture_counter < 51) ++arm_gesture_counter;
+    if (arm_gesture_counter > 50)
+    {
+      arm_gesture_counter = 50;
+      arm_gesture_state = 1;
     }
   }
-  else 
+  else
   {
-    chatta=0;
-    state=0;
+    reset_arm_gesture();
   }
-
-  return state;
-
+  return arm_gesture_state;
 }
 
 uint8_t logdata_out_com(void)

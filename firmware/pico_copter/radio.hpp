@@ -29,6 +29,11 @@
 
 //グローバル変数の宣言
 extern uint16_t Chdata[18];
+struct RadioStatus {
+    bool healthy;
+    uint32_t failsafe_count; // Records brief failsafe events across good frames
+};
+RadioStatus radio_update(void);
 
 //グローバル関数の宣言
 void radio_init(void);

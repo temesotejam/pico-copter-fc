@@ -46,8 +46,15 @@ int main(void)
 
   Arm_flag=1;
   
+  bool last_reported_failsafe = true;
   while(1)
   {
+    const bool fs = rc_failsafe_latched;
+    if (fs != last_reported_failsafe) {
+      last_reported_failsafe = fs;
+      printf("#RC %s (motors %s)\n", fs ? "FAILSAFE" : "GOOD",
+             fs ? "INHIBITED" : "DISARMED UNTIL RE-ARM");
+    }
     //printf("Arm_flag:%d LockMode:%d\n",Arm_flag, LockMode);
     tight_loop_contents();
     while (Logoutputflag==1){
