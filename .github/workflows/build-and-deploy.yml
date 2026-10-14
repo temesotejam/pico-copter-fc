@@ -152,6 +152,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
             firmware/pico_copter/tests/test_ch5_capture.cpp -o /tmp/ch5-capture-test
           /tmp/ch5-capture-test
+          g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
+            firmware/pico_copter/tests/test_dshot.cpp -o /tmp/dshot-test
+          /tmp/dshot-test
 
       - name: Configure Pico Copter
         shell: bash

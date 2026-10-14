@@ -144,7 +144,9 @@ void loop_400Hz(void)
 
   if (Arm_flag==0)
   {
-      //motor_stop();
+      // DShot ESCs need repeated STOP frames during initial calibration.
+      // Keep the motor-control loop timing unchanged.
+      motor_stop();
       Elevator_center = 0.0;
       Aileron_center = 0.0;
       Rudder_center = 0.0;

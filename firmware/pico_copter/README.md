@@ -79,6 +79,53 @@ PWMピンを変更する場合は `pwm.hpp` の `PWM_PIN_*` を変更します�
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
+## DShot300 motor output (RP2040 PIO)
+
+Motor outputs have been changed from analog PWM to **one-way DShot300**.
+The GPIO assignments, PID/EKF computations, radio receiver, CH5 logger, and
+400 Hz / 100 Hz control rates remain unchanged.
+
+| Signal | GPIO | Pico physical pin | Interface |
+|---|---:|---:|---|
+| Rear Left (RL) | 2 | 4 | PIO0 DShot300 |
+| Rear Right (RR) | 3 | 5 | PIO0 DShot300 |
+| Front Left (FL) | 14 | 19 | PIO0 DShot300 |
+| Front Right (FR) | 15 | 20 | PIO0 DShot300 |
+| Servo | 6 | 9 | hardware PWM, unchanged |
+
+- `pwm.cpp` keeps the PWM **slice 7** wrap IRQ solely as the **2.5 ms/400 Hz**
+  scheduler. GPIO14 is configured for PIO rather than PWM but its internal
+  PWM slice continues to run. Servo PWM remains on slice 3.
+- PIO0 uses four state machines (one per motor), at 2.4 MHz PIO execution clock,
+  eight PIO cycles per DShot bit. Each full 16-bit frame takes about 53.3 µs.
+  No software bit-banging, DMA, or new CPU interrupt is required.
+- The existing `set_duty_fr/fl/rr/rl(float)` entry points are preserved.
+  `motor_stop()` now sends DShot throttle **0** on all four pins; stop frames
+  continue at 400 Hz while disarmed / in radio failsafe.
+- To approximate the previous ESC PWM pulse span of **1100–1900 µs**, a
+  positive `duty` of 0.0–1.0 maps to a DShot normalized 10%–90% command,
+  namely `48 + round(1999 * (0.10 + 0.80 * duty))`. Duty 0,
+  negative values and non-finite values send DShot stop code 0.
+  The 1–47 special-command range is never generated.
+- DShot's bit-level timing and CRC are verified by a host-side test. This
+  firmware uses **standard unidirectional** (non-inverted) CRC with the
+  telemetry-request bit always zero. Bidirectional DShot / RPM telemetry
+  are not yet implemented.
+- The four GPIOs have **not** been reassigned; I-26 board wiring is preserved.
+  However, this is a **protocol change**: ESCs must actually be configured
+  for DShot300, and their response to DShot throttle values may differ from
+  the previous analog PWM calibration. No motor speed equivalence is assumed.
+- This implementation relies on the 400 Hz controller to refresh all four
+  outputs, including DShot stop. It is not an independent hardware watchdog:
+  a stalled controller cannot be guaranteed to send further stop frames.
+
+**Before operation:** remove propellers, check each pin with a logic analyzer
+(DShot300 bit 3.33 µs, '0' high 1.25 µs, '1' high 2.50 µs),
+verify all four motors respond to the correct output and STOP=0, and then
+recheck low/high throttle behavior. Never use this new UF2 for a propeller-on
+flight before these checks. For a quick rollback, restore the prior commit
+`b0c9826b3bca7c423c13f6b8884542189809b513` (legacy PWM firmware).
+
 ## SBUS communication-loss protection
 
 - `sbus_parser.hpp`: 完全な25バイトフレームのみ解析し、フレームロスト/フェイルセーフフラグを確認。

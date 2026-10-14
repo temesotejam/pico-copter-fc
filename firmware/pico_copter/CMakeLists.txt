@@ -66,10 +66,14 @@ target_include_directories(pico_copter PRIVATE
 target_link_libraries(pico_copter PRIVATE
     hardware_spi
     hardware_pwm
+    hardware_pio
+    hardware_clocks
     hardware_uart
     pico_stdlib
     pico_multicore
 )
+
+pico_generate_pio_header(pico_copter ${CMAKE_CURRENT_LIST_DIR}/dshot_tx.pio)
 
 pico_enable_stdio_usb(pico_copter 1)
 pico_enable_stdio_uart(pico_copter 0)

@@ -16,8 +16,9 @@
 #define DUTYMIN 1375
 #define DUTYMAX 2375
 
-// PWM output GPIO assignment.
-// Change only these GPIO numbers when the wiring is changed.
+// Actual motor signals use PIO DShot300; the servo remains PWM.
+// PWM_MAINLOOP_PIN identifies the internal PWM slice 7 timebase only.
+// Keep these GPIO numbers identical to the current I-26 control board.
 constexpr uint PWM_PIN_RL    = 2;
 constexpr uint PWM_PIN_RR    = 3;
 constexpr uint PWM_PIN_FL    = 14;
