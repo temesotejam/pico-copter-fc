@@ -38,4 +38,23 @@ void set_duty_fl(float duty);
 void set_duty_rr(float duty);
 void set_duty_rl(float duty);
 
+// Diagnostic telemetry only. No eRPM feedback into PID, EKF, or mixing.
+// Array order: FR, FL, RR, RL. A valid zero is distinct from unavailable.
+struct DShotMotorTelemetry {
+    uint32_t erpm;
+    uint32_t tx;
+    uint32_t rx_ok;
+    uint32_t rx_timeout;
+    uint32_t rx_bad_gcr;
+    uint32_t rx_bad_crc;
+    uint32_t rx_other;
+    uint32_t tx_busy;
+    bool fresh;
+};
+struct DShotTelemetrySnapshot {
+    DShotMotorTelemetry motors[4];
+};
+DShotTelemetrySnapshot dshot_telemetry_snapshot(void);
+
+
 #endif

@@ -64,52 +64,42 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
-## DShot300 motor output (RP2040 PIO)
+## 双方向DShot300：4モータのeRPM監視
 
-Motor outputs have been changed from analog PWM to **one-way DShot300**.
-The GPIO assignments, PID/EKF computations, radio receiver, CH5 logger, and
-400 Hz / 100 Hz control rates remain unchanged.
+RP2040のPIO0（4ステートマシン）で**双方向DShot300**を送受信します。配線は以前と同じです。
 
-| Signal | GPIO | Pico physical pin | Interface |
-|---|---:|---:|---|
-| Rear Left (RL) | 2 | 4 | PIO0 DShot300 |
-| Rear Right (RR) | 3 | 5 | PIO0 DShot300 |
-| Front Left (FL) | 14 | 19 | PIO0 DShot300 |
-| Front Right (FR) | 15 | 20 | PIO0 DShot300 |
-| Servo | 6 | 9 | hardware PWM, unchanged |
+| モータ | GPIO | Pico物理ピン |
+|---|---:|---:|
+| FR（前右） | 15 | 20 |
+| FL（前左） | 14 | 19 |
+| RR（後右） | 3 | 5 |
+| RL（後左） | 2 | 4 |
 
-- `pwm.cpp` keeps the PWM **slice 7** wrap IRQ solely as the **2.5 ms/400 Hz**
-  scheduler. GPIO14 is configured for PIO rather than PWM but its internal
-  PWM slice continues to run. Servo PWM remains on slice 3.
-- PIO0 uses four state machines (one per motor), at 2.4 MHz PIO execution clock,
-  eight PIO cycles per DShot bit. Each full 16-bit frame takes about 53.3 µs.
-  No software bit-banging, DMA, or new CPU interrupt is required.
-- The existing `set_duty_fr/fl/rr/rl(float)` entry points are preserved.
-  `motor_stop()` now sends DShot throttle **0** on all four pins; stop frames
-  continue at 400 Hz while disarmed / in radio failsafe.
-- To approximate the previous ESC PWM pulse span of **1100–1900 µs**, a
-  positive `duty` of 0.0–1.0 maps to a DShot normalized 10%–90% command,
-  namely `48 + round(1999 * (0.10 + 0.80 * duty))`. Duty 0,
-  negative values and non-finite values send DShot stop code 0.
-  The 1–47 special-command range is never generated.
-- DShot's bit-level timing and CRC are verified by a host-side test. This
-  firmware uses **standard unidirectional** (non-inverted) CRC with the
-  telemetry-request bit always zero. Bidirectional DShot / RPM telemetry
-  are not yet implemented.
-- The four GPIOs have **not** been reassigned; I-26 board wiring is preserved.
-  However, this is a **protocol change**: ESCs must actually be configured
-  for DShot300, and their response to DShot throttle values may differ from
-  the previous analog PWM calibration. No motor speed equivalence is assumed.
-- This implementation relies on the 400 Hz controller to refresh all four
-  outputs, including DShot stop. It is not an independent hardware watchdog:
-  a stalled controller cannot be guaranteed to send further stop frames.
+GPIO6のサーボはPWMのままです。GPIO14に対応するPWMスライス7は、
+ピンへPWMを出さず**400 Hzの制御周期生成のみ**を継続します。
 
-**Before operation:** remove propellers, check each pin with a logic analyzer
-(DShot300 bit 3.33 µs, '0' high 1.25 µs, '1' high 2.50 µs),
-verify all four motors respond to the correct output and STOP=0, and then
-recheck low/high throttle behavior. Never use this new UF2 for a propeller-on
-flight before these checks. For a quick rollback, restore the prior commit
-`b0c9826b3bca7c423c13f6b8884542189809b513` (legacy PWM firmware).
+- モータ指令の計算（PID、ミキシング、停止条件）と100 HzのEKF・CH5ログは**変更しません**。
+- 制御周期末に4本のDShot300を送信。**ESC応答を待たずに**処理を終了し、
+  **次の400 Hz周期で前回の受信結果を確認**します。受信失敗してもモータ指令は送信します。
+- 送信フォーマットは双方向用の反転波形・反転CRC（テレメトリ要求ビットは0）。
+  応答の21ビットNRZI/GCRとCRCを検証し、eRPMを復号します。
+- 4基のeRPMと受信成功率・受信失敗数を、飛行中にUSBシリアル接続がある場合のみ
+  **約1秒に1回**表示します（例：`#DShot300 FR eRPM=50000 valid=1 rx=400/400 (100%) ...`）。
+  250 msを超えて正常なeRPMが得られなければ `eRPM=-1 valid=0` と表示します。
+  `eRPM=0 valid=1` はモータ停止を意味する正常データです。
+- **eRPMは監視専用**です。PID/姿勢制御/モータ指令/CH5の38列リングバッファに入力しません。
+- eRPMは電気的回転数です。機械的RPMはモータの極対数で除して計算します。
+- 診断情報の表示はCore 0の通常のメインループで実行します。
+  **400 Hz制御割り込み内ではUSB出力・eRPM待機を行いません**。
+- 送信・受信PIO実装は [pio-dshot](https://github.com/simonwunderlich/pio-dshot) を参考にした
+  MITライセンスのコードです。ライセンス表記は `DSHOT_UPSTREAM_LICENSE.txt` に保存しています。
+- 元のPWM制御版はコミット `b0c9826b3bca7c423c13f6b8884542189809b513` です。
+  先の一方向DShot300版は `01cad80ac3fd60f4d3a2e7cc3f981279db3e04e0` です。
+
+**実機試験ではプロペラを取り外してください。** ESCが双方向DShot300に設定されていること、
+停止指令0・モータ4基の対応・反転信号の論理レベルを確認してください。
+受信処理にタイムアウトを設けた構造ですが、400 Hz制御の周期・ジッタと
+実際のeRPM受信成功率は未測定です。ビルド成功は実機動作を保証しません。
 
 ## ファームウェアとビルダーの分離
 

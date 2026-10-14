@@ -21,6 +21,22 @@ inline uint16_t frame(uint16_t throttle, bool telemetry = false) {
     return static_cast<uint16_t>((payload << 4) | checksum);
 }
 
+inline uint16_t bidirectional_frame(uint16_t throttle) {
+    if (throttle > kMaximumThrottle) throttle = kMaximumThrottle;
+    const uint16_t payload = static_cast<uint16_t>(throttle << 1);
+    const uint16_t checksum = static_cast<uint16_t>(
+        ~(payload ^ (payload >> 4) ^ (payload >> 8)) & 0x0fu);
+    return static_cast<uint16_t>((payload << 4) | checksum);
+}
+
+// The PIO library sends the inverted bitstream, MSB first.
+inline uint32_t bidirectional_pio_word(uint16_t throttle) {
+    return static_cast<uint32_t>(~bidirectional_frame(throttle) & 0xffffu) << 16;
+}
+
+// In bidirectional DShot, telemetry arrives on the motor signal wire.
+// The outgoing frame uses the INVERTED CRC nibble (unlike one-way DShot).
+
 // Preserve the old PWM output's approximate normalized ESC range:
 // the old duty 0..1 mapped to 1100..1900 us (assuming ESC 1000..2000 us).
 // A positive duty is a running command; zero/negative/nonfinite stop.

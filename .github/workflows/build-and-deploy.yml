@@ -155,6 +155,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
             firmware/pico_copter/tests/test_dshot.cpp -o /tmp/dshot-test
           /tmp/dshot-test
+          g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
+            firmware/pico_copter/tests/test_dshot_bidir.cpp -o /tmp/dshot-bidir-test
+          /tmp/dshot-bidir-test
 
       - name: Configure Pico Copter
         shell: bash

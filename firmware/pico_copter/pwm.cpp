@@ -1,116 +1,206 @@
 /*
- * pwm.cpp - PIO DShot300 for four ESCs, hardware PWM for servo and
- * a free-running PWM slice 7 wrap interrupt for the ORIGINAL 400 Hz loop.
- * The timer no longer drives GPIO14 (GPIO14 is a PIO data output).
+ * Bidirectional DShot300 / eRPM on RP2040 PIO0.
+ *
+ * Motor output is deliberately fire-and-forget from the controller's point
+ * of view. All four responses are collected NON-BLOCKING at the next 400 Hz
+ * PWM wrap IRQ, before four new packets are queued. No PID path reads eRPM.
+ *
+ * TX/RX PIO program adapted from simonwunderlich/pio-dshot (MIT):
+ * https://github.com/simonwunderlich/pio-dshot
  */
 #include "pwm.hpp"
 #include "dshot_protocol.hpp"
+#include "dshot_bidir_decode.hpp"
 #include "dshot_tx.pio.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/sync.h"
 
-uint8_t ESC_calib=0; // Legacy flag; ESC PWM calibration is not used by DShot.
+uint8_t ESC_calib = 0; // DShot does not require PWM throttle calibration.
 
 namespace {
-constexpr uint16_t PWM_WRAP=3124;
-constexpr float PWM_CLKDIV=100.0f;
-constexpr uint16_t SERVO_INITIAL_LEVEL=625;
-constexpr uint MOTOR_COUNT=4;
-constexpr uint MOTOR_PINS[MOTOR_COUNT]={
+constexpr uint16_t PWM_WRAP = 3124;
+constexpr float PWM_CLKDIV = 100.0f;
+constexpr uint16_t SERVO_INITIAL_LEVEL = 625;
+constexpr uint MOTOR_COUNT = 4;
+// IMPORTANT: channel index order is FR, FL, RR, RL throughout.
+constexpr uint MOTOR_PINS[MOTOR_COUNT] = {
     PWM_PIN_FR, PWM_PIN_FL, PWM_PIN_RR, PWM_PIN_RL
 };
-PIO dshot_pio=pio0;
-uint dshot_sm[MOTOR_COUNT]{};
-bool dshot_initialized=false;
-volatile uint32_t dshot_fifo_overruns=0;
+constexpr uint32_t PIO_CYCLES_PER_BIT = 40;
+constexpr uint32_t RX_TURNAROUND_CYCLES = 25u * dshot::kBitRate
+                                              * PIO_CYCLES_PER_BIT / 1000000u;
+constexpr uint32_t ERPM_STALE_US = 250000; // Telemetry display only.
+static_assert(RX_TURNAROUND_CYCLES == 300, "Wrong DShot300 turnaround");
+static_assert(400 * 2500 == 1000000, "400 Hz scheduling invariant");
 
-static void init_dshot_output() {
-    const uint offset=pio_add_program(dshot_pio,&dshot_tx_program);
-    const float clkdiv=static_cast<float>(clock_get_hz(clk_sys))
-                       / static_cast<float>(dshot::kPioClockHz);
-    for (uint i=0;i<MOTOR_COUNT;++i) {
-        const uint sm=pio_claim_unused_sm(dshot_pio,true);
-        dshot_sm[i]=sm;
-        const uint pin=MOTOR_PINS[i];
-        pio_sm_config cfg=dshot_tx_program_get_default_config(offset);
-        sm_config_set_sideset_pins(&cfg,pin);
-        sm_config_set_out_shift(&cfg,false,true,16); // MSB first, 16-bit autopull
-        sm_config_set_fifo_join(&cfg,PIO_FIFO_JOIN_TX);
-        sm_config_set_clkdiv(&cfg,clkdiv);
-        pio_gpio_init(dshot_pio,pin);
-        pio_sm_init(dshot_pio,sm,offset,&cfg);
-        pio_sm_set_consecutive_pindirs(dshot_pio,sm,pin,1,true);
+PIO dshot_pio = pio0;
+uint sm_for_motor[MOTOR_COUNT]{};
+bool dshot_ready = false;
+float requested_duty[MOTOR_COUNT]{};
+bool exchange_in_flight = false;
+bool motor_sent[MOTOR_COUNT]{};
+
+struct MotorStats {
+    uint32_t erpm = 0;
+    uint32_t last_good_us = 0;
+    uint32_t tx = 0;
+    uint32_t rx_ok = 0;
+    uint32_t rx_timeout = 0;
+    uint32_t rx_bad_gcr = 0;
+    uint32_t rx_bad_crc = 0;
+    uint32_t rx_other = 0;
+    uint32_t tx_busy = 0;
+};
+MotorStats telemetry[MOTOR_COUNT]{};
+
+void init_bidir_dshot() {
+    const uint offset = pio_add_program(dshot_pio, &dshot_tx_program);
+    const float divisor = static_cast<float>(clock_get_hz(clk_sys)) /
+                          static_cast<float>(dshot::kBitRate * PIO_CYCLES_PER_BIT);
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        const uint sm = pio_claim_unused_sm(dshot_pio, true);
+        const uint pin = MOTOR_PINS[i];
+        sm_for_motor[i] = sm;
+        pio_sm_config cfg = dshot_tx_program_get_default_config(offset);
+        sm_config_set_out_pins(&cfg, pin, 1);
+        sm_config_set_set_pins(&cfg, pin, 1);
+        sm_config_set_in_pins(&cfg, pin);
+        sm_config_set_jmp_pin(&cfg, pin);
+        sm_config_set_out_shift(&cfg, false, false, 32); // Left shift; manual pull
+        sm_config_set_in_shift(&cfg, false, false, 32);
+        sm_config_set_clkdiv(&cfg, divisor);
+        pio_gpio_init(dshot_pio, pin);
+        gpio_set_pulls(pin, true, false);
+        pio_sm_init(dshot_pio, sm, offset, &cfg);
+        pio_sm_set_pins(dshot_pio, sm, 1u); // Bidir line idle HIGH.
+        pio_sm_set_consecutive_pindirs(dshot_pio, sm, pin, 1, true);
     }
-    // Enable only after every GPIO and state machine has been initialized.
-    for (uint i=0;i<MOTOR_COUNT;++i) {
-        pio_sm_set_enabled(dshot_pio,dshot_sm[i],true);
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        pio_sm_set_enabled(dshot_pio, sm_for_motor[i], true);
     }
-    dshot_initialized=true;
+    dshot_ready = true;
 }
 
-static inline void send_dshot(uint channel,float duty) {
-    if (!dshot_initialized) return;
-    const uint sm=dshot_sm[channel];
-    const uint16_t command=dshot::throttle_from_legacy_duty(duty);
-    // Avoid IRQ blocking and prevent stale queued motor commands.
-    // At 400 Hz this FIFO should always be empty (DShot300 takes 53 us).
-    if (!pio_sm_is_tx_fifo_empty(dshot_pio,sm)) {
-        pio_sm_clear_fifos(dshot_pio,sm);
-        ++dshot_fifo_overruns;
+void collect_previous_telemetry() {
+    if (!exchange_in_flight) return;
+    const uint32_t now_us = time_us_32();
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        if (!motor_sent[i]) continue;
+        motor_sent[i] = false;
+        const uint sm = sm_for_motor[i];
+        MotorStats& stat = telemetry[i];
+        if (pio_sm_is_rx_fifo_empty(dshot_pio, sm)) {
+            ++stat.rx_timeout;
+            continue;
+        }
+        const uint32_t response = pio_sm_get(dshot_pio, sm);
+        const dshot::ErpmResult result = dshot::decode_erpm(response);
+        switch (result.result) {
+        case dshot::RxResult::Erpm:
+            stat.erpm = result.erpm;
+            stat.last_good_us = now_us;
+            ++stat.rx_ok;
+            break;
+        case dshot::RxResult::NoResponse: ++stat.rx_timeout; break;
+        case dshot::RxResult::BadGcr: ++stat.rx_bad_gcr; break;
+        case dshot::RxResult::BadChecksum: ++stat.rx_bad_crc; break;
+        case dshot::RxResult::OtherTelemetry: ++stat.rx_other; break;
+        }
     }
-    pio_sm_put(dshot_pio,sm,dshot::pio_word(command));
+    exchange_in_flight = false;
 }
 
-static void pwm_wrap_irq_handler() {
-    // Preserve the exact 400 Hz timer source (PWM slice of GPIO14), even
-    // though the actual motor signal GPIO14 is muxed to PIO0.
+void start_next_exchange() {
+    if (!dshot_ready) return;
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        const uint sm = sm_for_motor[i];
+        if (!pio_sm_is_tx_fifo_empty(dshot_pio, sm)
+            || !pio_sm_is_rx_fifo_empty(dshot_pio, sm)) {
+            // Never block the 400 Hz controller waiting for ESC telemetry.
+            ++telemetry[i].tx_busy;
+            continue;
+        }
+        const uint16_t throttle = dshot::throttle_from_legacy_duty(requested_duty[i]);
+        pio_sm_put(dshot_pio, sm, dshot::bidirectional_pio_word(throttle));
+        pio_sm_put(dshot_pio, sm, RX_TURNAROUND_CYCLES);
+        ++telemetry[i].tx;
+        motor_sent[i] = true;
+    }
+    exchange_in_flight = true;
+}
+
+void pwm_wrap_irq_handler() {
     pwm_clear_irq(pwm_gpio_to_slice_num(PWM_MAINLOOP_PIN));
+    // Existing 400Hz motor and SBUS/failsafe calculations run unchanged.
     MAINLOOP();
+    // No blocking RX calls: read the PREVIOUS cycle, then start next cycle.
+    collect_previous_telemetry();
+    start_next_exchange();
 }
 } // namespace
 
+DShotTelemetrySnapshot dshot_telemetry_snapshot(void) {
+    DShotTelemetrySnapshot result{};
+    const uint32_t saved = save_and_disable_interrupts();
+    const uint32_t now_us = time_us_32();
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        const MotorStats& s = telemetry[i];
+        auto& dest = result.motors[i];
+        dest.erpm = s.erpm;
+        dest.tx = s.tx;
+        dest.rx_ok = s.rx_ok;
+        dest.rx_timeout = s.rx_timeout;
+        dest.rx_bad_gcr = s.rx_bad_gcr;
+        dest.rx_bad_crc = s.rx_bad_crc;
+        dest.rx_other = s.rx_other;
+        dest.tx_busy = s.tx_busy;
+        dest.fresh = s.rx_ok != 0 &&
+                     static_cast<uint32_t>(now_us - s.last_good_us) <= ERPM_STALE_US;
+    }
+    restore_interrupts(saved);
+    return result;
+}
+
 void pwm_init() {
     static_assert(PWM_PIN_FR != PWM_PIN_FL && PWM_PIN_FR != PWM_PIN_RR
-                  && PWM_PIN_FR != PWM_PIN_RL && PWM_PIN_FL != PWM_PIN_RR
-                  && PWM_PIN_FL != PWM_PIN_RL && PWM_PIN_RR != PWM_PIN_RL,
-                  "DShot motor GPIO assignments must be unique");
+        && PWM_PIN_FR != PWM_PIN_RL && PWM_PIN_FL != PWM_PIN_RR
+        && PWM_PIN_FL != PWM_PIN_RL && PWM_PIN_RR != PWM_PIN_RL,
+        "DShot motor GPIOs must be unique");
     static_assert(PWM_PIN_SERVO != PWM_PIN_FR && PWM_PIN_SERVO != PWM_PIN_FL
-                  && PWM_PIN_SERVO != PWM_PIN_RR && PWM_PIN_SERVO != PWM_PIN_RL,
-                  "Servo PWM pin cannot be a DShot pin");
+        && PWM_PIN_SERVO != PWM_PIN_RR && PWM_PIN_SERVO != PWM_PIN_RL,
+        "Servo GPIO must be distinct from DShot GPIOs");
 
-    // Servo is the only GPIO that actually uses PWM output function.
-    gpio_set_function(PWM_PIN_SERVO,GPIO_FUNC_PWM);
-    const uint servo_slice=pwm_gpio_to_slice_num(PWM_PIN_SERVO);
-    const uint mainloop_slice=pwm_gpio_to_slice_num(PWM_MAINLOOP_PIN);
-    if (servo_slice==mainloop_slice) {
-        panic("Servo and 400 Hz timebase must use distinct PWM slices");
-    }
-    pwm_set_wrap(servo_slice,PWM_WRAP);
-    pwm_set_clkdiv(servo_slice,PWM_CLKDIV);
-    pwm_set_gpio_level(PWM_PIN_SERVO,SERVO_INITIAL_LEVEL);
+    // Preserve servo PWM. Preserve PWM slice 7's 400 Hz wrap IRQ,
+    // even though GPIO14 now routes to PIO, not the PWM peripheral.
+    gpio_set_function(PWM_PIN_SERVO, GPIO_FUNC_PWM);
+    const uint servo_slice = pwm_gpio_to_slice_num(PWM_PIN_SERVO);
+    const uint mainloop_slice = pwm_gpio_to_slice_num(PWM_MAINLOOP_PIN);
+    if (servo_slice == mainloop_slice) panic("Servo/control PWM slice collision");
+    pwm_set_wrap(servo_slice, PWM_WRAP);
+    pwm_set_clkdiv(servo_slice, PWM_CLKDIV);
+    pwm_set_gpio_level(PWM_PIN_SERVO, SERVO_INITIAL_LEVEL);
 
-    // DShot owns all four motor signal pins. No extra CPU timer or DMA.
-    init_dshot_output();
+    init_bidir_dshot();
 
-    // A free-running PWM slice remains the original 2.5 ms control timer.
-    // No GPIO has to be configured in PWM mode for this slice to run.
-    pwm_set_wrap(mainloop_slice,PWM_WRAP);
-    pwm_set_clkdiv(mainloop_slice,PWM_CLKDIV);
+    pwm_set_wrap(mainloop_slice, PWM_WRAP);
+    pwm_set_clkdiv(mainloop_slice, PWM_CLKDIV);
     pwm_clear_irq(mainloop_slice);
-    pwm_set_irq_enabled(mainloop_slice,true);
-    irq_set_exclusive_handler(PWM_IRQ_WRAP,pwm_wrap_irq_handler);
-    irq_set_enabled(PWM_IRQ_WRAP,true);
-    pwm_set_enabled(servo_slice,true);
-    pwm_set_enabled(mainloop_slice,true);
+    pwm_set_irq_enabled(mainloop_slice, true);
+    irq_set_exclusive_handler(PWM_IRQ_WRAP, pwm_wrap_irq_handler);
+    irq_set_enabled(PWM_IRQ_WRAP, true);
+    pwm_set_enabled(servo_slice, true);
+    pwm_set_enabled(mainloop_slice, true);
 
-    // The 400 Hz ISR emits DShot stop=0 while the controller is not armed.
-    // Preserve the previous startup delays; DShot needs no ESC calibration.
+    // Preserve legacy initialization delay and output stop during disarm.
     sleep_ms(3000);
-    pwm_set_gpio_level(PWM_PIN_SERVO,SERVO_INITIAL_LEVEL);
+    pwm_set_gpio_level(PWM_PIN_SERVO, SERVO_INITIAL_LEVEL);
     sleep_ms(1000);
 }
 
-void set_duty_fr(float duty) { send_dshot(0,duty); }
-void set_duty_fl(float duty) { send_dshot(1,duty); }
-void set_duty_rr(float duty) { send_dshot(2,duty); }
-void set_duty_rl(float duty) { send_dshot(3,duty); }
+// Existing interface. These update 4 desired throttle commands only; actual
+// DShot TX/RX happens together after MAINLOOP() every 2.5 ms.
+void set_duty_fr(float duty) { requested_duty[0] = duty; }
+void set_duty_fl(float duty) { requested_duty[1] = duty; }
+void set_duty_rr(float duty) { requested_duty[2] = duty; }
+void set_duty_rl(float duty) { requested_duty[3] = duty; }
