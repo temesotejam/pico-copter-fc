@@ -30,6 +30,16 @@ void variable_init(void);
 void log_output(void);
 void flight_log_init(void);
 
+// Read-only snapshot for USB diagnostics. These are most recently computed
+// mixer values, not guaranteed active when the motors are disarmed/stopped.
+struct ControlDebugSnapshot {
+    float t_ref, p_com, q_com, r_com;
+    float fr_duty, fl_duty, rr_duty, rl_duty;
+    uint8_t arm, lock_mode, logflag, over_g;
+    bool failsafe_latched;
+};
+ControlDebugSnapshot control_debug_snapshot(void);
+
 //グローバル変数
 extern volatile uint8_t LockMode;
 extern volatile bool rc_failsafe_latched;

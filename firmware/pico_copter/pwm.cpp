@@ -54,6 +54,8 @@ struct MotorStats {
     uint32_t rx_bad_crc = 0;
     uint32_t rx_other = 0;
     uint32_t tx_busy = 0;
+    uint16_t last_command = 0;
+    uint16_t last_frame = 0;
 };
 MotorStats telemetry[MOTOR_COUNT]{};
 
@@ -128,6 +130,8 @@ void start_next_exchange() {
         pio_sm_put(dshot_pio, sm, dshot::bidirectional_pio_word(throttle));
         pio_sm_put(dshot_pio, sm, RX_TURNAROUND_CYCLES);
         ++telemetry[i].tx;
+        telemetry[i].last_command = throttle;
+        telemetry[i].last_frame = dshot::bidirectional_frame(throttle);
         motor_sent[i] = true;
     }
     exchange_in_flight = true;
@@ -158,6 +162,9 @@ DShotTelemetrySnapshot dshot_telemetry_snapshot(void) {
         dest.rx_bad_crc = s.rx_bad_crc;
         dest.rx_other = s.rx_other;
         dest.tx_busy = s.tx_busy;
+        dest.requested_duty = requested_duty[i];
+        dest.last_command = s.last_command;
+        dest.last_frame = s.last_frame;
         dest.fresh = s.rx_ok != 0 &&
                      static_cast<uint32_t>(now_us - s.last_good_us) <= ERPM_STALE_US;
     }

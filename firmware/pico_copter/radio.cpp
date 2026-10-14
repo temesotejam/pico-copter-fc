@@ -16,6 +16,7 @@ volatile uint8_t latest_flags = 0;
 volatile uint8_t latest_end = 0;
 volatile uint32_t last_healthy_us = 0;
 volatile uint32_t failsafe_event_count = 0;
+volatile uint32_t good_frame_count = 0;
 volatile bool have_healthy_frame = false;
 }
 
@@ -62,5 +63,25 @@ void on_uart_rx(void) {
         for (uint32_t i = 0; i < 16; ++i) latest_channels[i] = frame.channels[i];
         last_healthy_us = time_us_32();
         have_healthy_frame = true;
+        ++good_frame_count;
     }
+}
+
+RadioDebugSnapshot radio_debug_snapshot(void) {
+    RadioDebugSnapshot snapshot{};
+    // UART RX interrupt and PWM control loop both run on core 0.
+    const uint32_t saved = save_and_disable_interrupts();
+    const uint32_t now_us = time_us_32();
+    for (uint32_t i = 0; i < 6; ++i) snapshot.channels[i] = latest_channels[i];
+    snapshot.received = have_healthy_frame;
+    snapshot.age_ms = have_healthy_frame
+        ? static_cast<uint32_t>(now_us - last_healthy_us) / 1000u
+        : UINT32_MAX;
+    snapshot.flags = latest_flags;
+    snapshot.good_frames = good_frame_count;
+    snapshot.failsafe_events = failsafe_event_count;
+    snapshot.healthy = sbus::link_fresh(now_us, last_healthy_us, have_healthy_frame)
+        && (latest_flags & sbus::kFailsafeFlag) == 0;
+    restore_interrupts(saved);
+    return snapshot;
 }

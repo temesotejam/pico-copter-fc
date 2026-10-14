@@ -35,5 +35,18 @@ struct RadioStatus {
 };
 RadioStatus radio_update(void);
 
+// Read-only, low-rate USB diagnostics. Channels hold the last accepted
+// healthy frame and therefore can be stale after the RC link is lost.
+struct RadioDebugSnapshot {
+    uint16_t channels[6];
+    uint32_t age_ms;        // UINT32_MAX before first healthy SBUS frame
+    uint32_t good_frames;
+    uint32_t failsafe_events;
+    uint8_t flags;          // flags from the most recently decoded frame
+    bool healthy;
+    bool received;
+};
+RadioDebugSnapshot radio_debug_snapshot(void);
+
 //グローバル関数の宣言
 void radio_init(void);

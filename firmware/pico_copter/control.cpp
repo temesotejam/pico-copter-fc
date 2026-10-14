@@ -451,6 +451,29 @@ uint8_t logdata_out_com(void)
   return 0;
 }
 
+ControlDebugSnapshot control_debug_snapshot(void)
+{
+  ControlDebugSnapshot snapshot{};
+  // Snapshot the core-0 motor mixer variables without allowing the 400-Hz
+  // PWM IRQ to update them halfway through this diagnostic read.
+  const uint32_t saved = save_and_disable_interrupts();
+  snapshot.t_ref = T_ref;
+  snapshot.p_com = P_com;
+  snapshot.q_com = Q_com;
+  snapshot.r_com = R_com;
+  snapshot.fr_duty = FR_duty;
+  snapshot.fl_duty = FL_duty;
+  snapshot.rr_duty = RR_duty;
+  snapshot.rl_duty = RL_duty;
+  snapshot.arm = Arm_flag;
+  snapshot.lock_mode = LockMode;
+  snapshot.logflag = Logflag;
+  snapshot.over_g = OverG_flag;
+  snapshot.failsafe_latched = rc_failsafe_latched;
+  restore_interrupts(saved);
+  return snapshot;
+}
+
 void motor_stop(void)
 {
   set_duty_fr(0.0);

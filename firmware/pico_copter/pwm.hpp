@@ -50,6 +50,11 @@ struct DShotMotorTelemetry {
     uint32_t rx_other;
     uint32_t tx_busy;
     bool fresh;
+    // Diagnostics: value requested by the controller and the last packet
+    // actually queued into this channel's PIO TX FIFO.
+    float requested_duty;
+    uint16_t last_command; // 0=STOP; 48..2047=running
+    uint16_t last_frame;   // logical 16-bit bidirectional DShot packet
 };
 struct DShotTelemetrySnapshot {
     DShotMotorTelemetry motors[4];
