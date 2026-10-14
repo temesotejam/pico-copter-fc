@@ -17,7 +17,7 @@
 #define MAINLOOP loop_400Hz
 
 //グローバル変数
-extern uint8_t Arm_flag;
+extern volatile uint8_t Arm_flag;
 extern semaphore_t sem;
 
 #endif

@@ -2,7 +2,7 @@
 #include "pico_copter.hpp"
 
 //グローバル変数
-uint8_t Arm_flag=0;
+volatile uint8_t Arm_flag=0;
 semaphore_t sem;
 
 int main(void)
@@ -27,6 +27,9 @@ int main(void)
   //Initilize Control
   control_init();
   
+  //Initialize synchronized RAM flight recorder before enabling 400 Hz IRQ.
+  flight_log_init();
+
   //Initialize PWM
   //Start 400Hz Interval
   ESC_calib=0;

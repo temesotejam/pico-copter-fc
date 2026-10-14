@@ -28,6 +28,7 @@ void angle_control(void);
 void gyro_calibration(void);
 void variable_init(void);
 void log_output(void);
+void flight_log_init(void);
 
 //グローバル変数
 extern uint8_t LockMode;

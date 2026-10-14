@@ -146,6 +146,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
             firmware/pico_copter/tests/test_sbus.cpp -o /tmp/sbus-test
           /tmp/sbus-test
+          g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
+            firmware/pico_copter/tests/test_flight_log_ring.cpp -o /tmp/flight-log-test
+          /tmp/flight-log-test
 
       - name: Configure Pico Copter
         shell: bash

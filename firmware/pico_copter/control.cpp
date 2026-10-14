@@ -5,6 +5,8 @@
 
 #include "control.hpp"
 #include "sbus_parser.hpp"
+#include "flight_log_ring.hpp"
+#include "pico/sync.h"
 
 //Sensor data
 float Ax,Ay,Az,Wp,Wq,Wr,Mx,My,Mz,Mx0,My0,Mz0,Mx_ave,My_ave,Mz_ave;
@@ -46,14 +48,19 @@ Matrix<float, 6, 6> R;// = MatrixXf::Identity(6, 6)*0.0001;
 Matrix<float, 7 ,6> G;
 Matrix<float, 3 ,1> Beta;
 
-//Log
-uint16_t LogdataCounter=0;
-uint8_t Logflag=0;
+// Flight log records 38 floats at 100 Hz, retaining the newest 1263 samples.
+constexpr uint32_t DATANUM=38;
+constexpr uint32_t LOGDATANUM=48000;
+constexpr uint32_t LOG_ROWS=LOGDATANUM/DATANUM;
+static_assert(LOG_ROWS==1263, "Flight log rows must be complete");
+FlightLogRing<LOG_ROWS, DATANUM> flight_log;
+critical_section_t flight_log_guard;
+volatile uint8_t Logflag=0;
 volatile uint8_t Logoutputflag=0;
-float Log_time=0.0;
-const uint8_t DATANUM=38; //Log Data Number
-const uint32_t LOGDATANUM=48000;
-float Logdata[LOGDATANUM]={0.0};
+uint32_t log_output_position=0;
+uint32_t log_output_count=0;
+uint64_t log_output_first_sample=0;
+bool log_output_started=false;
 
 //State Machine
 uint8_t LockMode=0;
@@ -85,6 +92,8 @@ void output_data(void);
 void output_sensor_raw_data(void);
 void kalman_filter(void);
 void logging(void);
+void flight_log_freeze(void);
+void flight_log_reset(void);
 void motor_stop(void);
 uint8_t lock_com(void);
 bool arm_gesture_held(void);
@@ -114,6 +123,7 @@ void loop_400Hz(void)
   if (!rc_allowed) {
     motor_stop(); // Sends the ESC minimum command, not a power disconnect.
     if (Arm_flag == 2 || Arm_flag == 4) {
+      flight_log_freeze();
       Arm_flag = 3;
       Logoutputflag = 0;
     }
@@ -220,6 +230,8 @@ void loop_400Hz(void)
       if(lock_com()==1)
       {
         LockMode=3;//Disenable Flight
+        flight_log_freeze();
+        motor_stop();
         led=0;
         gpio_put(LED_PIN,led);
         return;
@@ -289,6 +301,7 @@ void loop_400Hz(void)
     {
       if(lock_com()==0)
       {
+        flight_log_reset(); // Start a fresh rolling recording on each arm.
         LockMode=2;//Enable Flight
         Arm_flag=2;
       }
@@ -297,6 +310,8 @@ void loop_400Hz(void)
 
     if(logdata_out_com()==1)
     {
+      flight_log_freeze();
+      log_output_started=false;
       Arm_flag=4;
       return;
     }
@@ -385,26 +400,29 @@ uint8_t lock_com(void)
 
 uint8_t logdata_out_com(void)
 {
-  static uint8_t chatta=0,state=0;
-  if( Chdata[4]<(CH5MAX+CH5MIN)*0.5 
-   && Chdata[2]<CH3MIN+80 
-   && Chdata[0]<CH1MIN+80
-   && Chdata[3]>CH4MAX-80 
-   && Chdata[1]>CH2MAX-80)
+  // Trigger once per continuous stick gesture, not repeatedly while held.
+  static uint8_t hold_ticks=0;
+  static bool ready_for_command=true;
+  const bool held=Chdata[4]<(CH5MAX+CH5MIN)*0.5
+      && Chdata[2]<CH3MIN+80
+      && Chdata[0]<CH1MIN+80
+      && Chdata[3]>CH4MAX-80
+      && Chdata[1]>CH2MAX-80;
+  if(!held)
   {
-    chatta++;
-    if(chatta>50){
-      chatta=50;
-      state=1;
-    }
+    hold_ticks=0;
+    ready_for_command=true;
+    return 0;
   }
-  else 
+  if(!ready_for_command) return 0;
+  if(hold_ticks<51) ++hold_ticks;
+  if(hold_ticks>=51)
   {
-    chatta=0;
-    state=0;
+    hold_ticks=0;
+    ready_for_command=false;
+    return 1;
   }
-
-  return state;
+  return 0;
 }
 
 void motor_stop(void)
@@ -590,79 +608,97 @@ void angle_control(void)
   }
 }
 
+void flight_log_init(void)
+{
+  critical_section_init(&flight_log_guard);
+  critical_section_enter_blocking(&flight_log_guard);
+  flight_log.reset();
+  critical_section_exit(&flight_log_guard);
+}
+
+void flight_log_freeze(void)
+{
+  critical_section_enter_blocking(&flight_log_guard);
+  flight_log.freeze();
+  critical_section_exit(&flight_log_guard);
+  Logflag=0;
+}
+
+void flight_log_reset(void)
+{
+  critical_section_enter_blocking(&flight_log_guard);
+  flight_log.reset();
+  critical_section_exit(&flight_log_guard);
+  log_output_position=0;
+  log_output_count=0;
+  log_output_first_sample=0;
+  log_output_started=false;
+  Logflag=0;
+}
+
 void logging(void)
-{  
-  //Logging
-  if(Chdata[4]>(CH5MAX+CH5MIN)*0.5)
-  { 
-    if(Logflag==0)
-    {
-      Logflag=1;
-      LogdataCounter=0;
-    }
-    if(LogdataCounter+DATANUM<LOGDATANUM)
-    {
-      Logdata[LogdataCounter++]=Xe(0,0);                  //1
-      Logdata[LogdataCounter++]=Xe(1,0);                  //2
-      Logdata[LogdataCounter++]=Xe(2,0);                  //3
-      Logdata[LogdataCounter++]=Xe(3,0);                  //4
-      Logdata[LogdataCounter++]=Xe(4,0);                  //5
-      Logdata[LogdataCounter++]=Xe(5,0);                  //6
-      Logdata[LogdataCounter++]=Xe(6,0);                  //7
-      Logdata[LogdataCounter++]=Wp;//-Pbias;              //8
-      Logdata[LogdataCounter++]=Wq;//-Qbias;              //9
-      Logdata[LogdataCounter++]=Wr;//-Rbias;              //10
+{
+  // Runs from the 100 Hz core-1 attitude loop. Record automatically while armed.
+  if(Arm_flag!=2) return;
+  float row[DATANUM];
+  row[0] = Xe(0,0);                  //1
+  row[1] = Xe(1,0);                  //2
+  row[2] = Xe(2,0);                  //3
+  row[3] = Xe(3,0);                  //4
+  row[4] = Xe(4,0);                  //5
+  row[5] = Xe(5,0);                  //6
+  row[6] = Xe(6,0);                  //7
+  row[7] = Wp;//-Pbias;              //8
+  row[8] = Wq;//-Qbias;              //9
+  row[9] = Wr;//-Rbias;              //10
+  row[10] = Ax;                       //11
+  row[11] = Ay;                       //12
+  row[12] = Az;                       //13
+  row[13] = Mx;                       //14
+  row[14] = My;                       //15
+  row[15] = Mz;                       //16
+  row[16] = Pref;                     //17
+  row[17] = Qref;                     //18
+  row[18] = Rref;                     //19
+  row[19] = Phi-Phi_bias;             //20
+  row[20] = Theta-Theta_bias;         //21
+  row[21] = Psi-Psi_bias;             //22
+  row[22] = Phi_ref;                  //23
+  row[23] = Theta_ref;                //24
+  row[24] = Psi_ref;                  //25
+  row[25] = P_com;                    //26
+  row[26] = Q_com;                    //27
+  row[27] = R_com;                    //28
+  row[28] = p_pid.m_integral;//m_filter_output;    //29
+  row[29] = q_pid.m_integral;//m_filter_output;    //30
+  row[30] = r_pid.m_integral;//m_filter_output;    //31
+  row[31] = phi_pid.m_integral;//m_filter_output;  //32
+  row[32] = theta_pid.m_integral;//m_filter_output;//33
+  row[33] = Pbias;                    //34
+  row[34] = Qbias;                    //35
+  row[35] = Rbias;                    //36
+  row[36] = T_ref;                    //37
+  row[37] = Acc_norm;                 //38
 
-      Logdata[LogdataCounter++]=Ax;                       //11
-      Logdata[LogdataCounter++]=Ay;                       //12
-      Logdata[LogdataCounter++]=Az;                       //13
-      Logdata[LogdataCounter++]=Mx;                       //14
-      Logdata[LogdataCounter++]=My;                       //15
-      Logdata[LogdataCounter++]=Mz;                       //16
-      Logdata[LogdataCounter++]=Pref;                     //17
-      Logdata[LogdataCounter++]=Qref;                     //18
-      Logdata[LogdataCounter++]=Rref;                     //19
-      Logdata[LogdataCounter++]=Phi-Phi_bias;             //20
-
-      Logdata[LogdataCounter++]=Theta-Theta_bias;         //21
-      Logdata[LogdataCounter++]=Psi-Psi_bias;             //22
-      Logdata[LogdataCounter++]=Phi_ref;                  //23
-      Logdata[LogdataCounter++]=Theta_ref;                //24
-      Logdata[LogdataCounter++]=Psi_ref;                  //25
-      Logdata[LogdataCounter++]=P_com;                    //26
-      Logdata[LogdataCounter++]=Q_com;                    //27
-      Logdata[LogdataCounter++]=R_com;                    //28
-      Logdata[LogdataCounter++]=p_pid.m_integral;//m_filter_output;    //29
-      Logdata[LogdataCounter++]=q_pid.m_integral;//m_filter_output;    //30
-
-      Logdata[LogdataCounter++]=r_pid.m_integral;//m_filter_output;    //31
-      Logdata[LogdataCounter++]=phi_pid.m_integral;//m_filter_output;  //32
-      Logdata[LogdataCounter++]=theta_pid.m_integral;//m_filter_output;//33
-      Logdata[LogdataCounter++]=Pbias;                    //34
-      Logdata[LogdataCounter++]=Qbias;                    //35
-
-      Logdata[LogdataCounter++]=Rbias;                    //36
-      Logdata[LogdataCounter++]=T_ref;                    //37
-      Logdata[LogdataCounter++]=Acc_norm;                 //38
-
-   
-    }
-    else Logflag=2;
-  }
-  else
-  { 
-    if(Logflag>0)
-    {
-      Logflag=0;
-      LogdataCounter=0;
-    }
-  }
+  // Publish a complete 38-field sample atomically with respect to the
+  // core-0 disarm/freeze and USB export operations.
+  critical_section_enter_blocking(&flight_log_guard);
+  const bool saved=Arm_flag==2 && flight_log.append(row);
+  critical_section_exit(&flight_log_guard);
+  if(saved) Logflag=1;
 }
 
 void log_output(void)
 {
-  if(LogdataCounter==0)
+  if(!log_output_started)
   {
+    critical_section_enter_blocking(&flight_log_guard);
+    flight_log.freeze();
+    log_output_count=flight_log.count();
+    log_output_first_sample=flight_log.first_sample_number();
+    critical_section_exit(&flight_log_guard);
+    log_output_position=0;
+    log_output_started=true;
     printPQR();
     printf("#Roll rate PID gain\n");
     p_pid.printGain();
@@ -674,29 +710,36 @@ void log_output(void)
     phi_pid.printGain();
     printf("#Pitch angle PID gain\n");
     theta_pid.printGain();
+    printf("#Flight log: 100 Hz, 38 fields, %lu/%lu samples, oldest first\n",
+           static_cast<unsigned long>(log_output_count),
+           static_cast<unsigned long>(LOG_ROWS));
+    printf("#time_s is nominal elapsed time since the start of this flight\n");
   }
-  if(LogdataCounter+DATANUM<LOGDATANUM)
+  if(log_output_position<log_output_count)
   {
-    //LockMode=0;
-    printf("%10.2f ", Log_time);
-    Log_time=Log_time + 0.01;
-    for (uint8_t i=0;i<DATANUM;i++)
+    float row[DATANUM];
+    critical_section_enter_blocking(&flight_log_guard);
+    const bool ok=flight_log.read_oldest_first(log_output_position,row);
+    critical_section_exit(&flight_log_guard);
+    if(ok)
     {
-      printf("%12.5f",Logdata[LogdataCounter+i]);
+      const double nominal_time=static_cast<double>(
+          log_output_first_sample+log_output_position)*0.01;
+      printf("%10.2f ",nominal_time);
+      for(uint32_t i=0;i<DATANUM;++i) printf("%12.5f",row[i]);
+      printf("\n");
+      ++log_output_position;
+      return;
     }
-    printf("\n");
-    LogdataCounter=LogdataCounter + DATANUM;
   }
-  else 
-  {
-    Arm_flag=3;
-    Logoutputflag=0;
-    LockMode=0;
-    Log_time=0.0;
-    LogdataCounter=0;
-  }
+  printf("#Flight log export complete: %lu samples\n",
+         static_cast<unsigned long>(log_output_position));
+  // Keep the frozen recording available for another export until the next arm.
+  Arm_flag=3;
+  Logoutputflag=0;
+  LockMode=0;
+  log_output_started=false;
 }
-
 
 void gyroCalibration(void)
 {
