@@ -1,5 +1,5 @@
 /*
- * Bidirectional DShot300 / eRPM on RP2040 PIO0.
+ * Bidirectional DShot300 / eRPM on RP2040 (Pico) or RP2350 (Pico 2).
  *
  * Motor output is deliberately fire-and-forget from the controller's point
  * of view. All four responses are collected NON-BLOCKING at the next 400 Hz
@@ -20,7 +20,10 @@ uint8_t ESC_calib = 0; // DShot does not require PWM throttle calibration.
 
 namespace {
 constexpr uint16_t PWM_WRAP = 3124;
-constexpr float PWM_CLKDIV = 100.0f;
+// Pico runs at 125 MHz, Pico 2 at 150 MHz by default. Compute the
+// divider at startup, so the PWM-slice timebase stays EXACTLY 400 Hz
+// on both chips instead of silently changing to 480 Hz on Pico 2.
+constexpr uint32_t PWM_FREQUENCY_HZ = 400;
 constexpr uint16_t SERVO_INITIAL_LEVEL = 625;
 constexpr uint MOTOR_COUNT = 4;
 // IMPORTANT: channel index order is FR, FL, RR, RL throughout.
@@ -177,14 +180,19 @@ void pwm_init() {
     const uint servo_slice = pwm_gpio_to_slice_num(PWM_PIN_SERVO);
     const uint mainloop_slice = pwm_gpio_to_slice_num(PWM_MAINLOOP_PIN);
     if (servo_slice == mainloop_slice) panic("Servo/control PWM slice collision");
+    const float pwm_clkdiv = static_cast<float>(clock_get_hz(clk_sys)) /
+                             (static_cast<float>(PWM_WRAP + 1u) * PWM_FREQUENCY_HZ);
+    if (pwm_clkdiv < 1.0f || pwm_clkdiv >= 256.0f) {
+        panic("Unsupported clock for 400 Hz PWM timebase");
+    }
     pwm_set_wrap(servo_slice, PWM_WRAP);
-    pwm_set_clkdiv(servo_slice, PWM_CLKDIV);
+    pwm_set_clkdiv(servo_slice, pwm_clkdiv);
     pwm_set_gpio_level(PWM_PIN_SERVO, SERVO_INITIAL_LEVEL);
 
     init_bidir_dshot();
 
     pwm_set_wrap(mainloop_slice, PWM_WRAP);
-    pwm_set_clkdiv(mainloop_slice, PWM_CLKDIV);
+    pwm_set_clkdiv(mainloop_slice, pwm_clkdiv);
     pwm_clear_irq(mainloop_slice);
     pwm_set_irq_enabled(mainloop_slice, true);
     irq_set_exclusive_handler(PWM_IRQ_WRAP, pwm_wrap_irq_handler);

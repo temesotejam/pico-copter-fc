@@ -189,6 +189,33 @@ jobs:
             ccache --show-stats
           } 2>&1 | tee build.log
 
+      - name: Configure Pico 2 Copter
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake \
+            -S firmware/pico_copter \
+            -B build-pico2 \
+            -G Ninja \
+            -DPICO_SDK_PATH="${PICO_SDK_PATH}" \
+            -DEIGEN3_INCLUDE_DIR="${EIGEN3_INCLUDE_DIR}" \
+            -DPICO_BOARD=pico2 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            2>&1 | tee configure-pico2.log
+
+      - name: Build Pico 2 Copter UF2
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            cmake --build build-pico2 \
+              --target pico_copter \
+              --parallel "$(nproc)"
+            test -s build-pico2/pico_copter.uf2
+          } 2>&1 | tee build-pico2.log
+
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -197,6 +224,8 @@ jobs:
           path: |
             configure.log
             build.log
+            configure-pico2.log
+            build-pico2.log
           if-no-files-found: warn
           retention-days: 1
 
@@ -211,16 +240,23 @@ jobs:
 
           for DEST in output site/firmware; do
             cp build/pico_copter.uf2 "${DEST}/pico_copter.uf2"
+            cp build-pico2/pico_copter.uf2 "${DEST}/pico_copter_pico2.uf2"
             sha256sum build/pico_copter.uf2 \
               | sed 's#  .*#  pico_copter.uf2#' \
               > "${DEST}/pico_copter.uf2.sha256"
             stat -c '%s' build/pico_copter.uf2 > "${DEST}/size.txt"
-            cp configure.log build.log "${DEST}/"
+            sha256sum build-pico2/pico_copter.uf2 \
+              | sed 's#  .*#  pico_copter_pico2.uf2#' \
+              > "${DEST}/pico_copter_pico2.uf2.sha256"
+            stat -c '%s' build-pico2/pico_copter.uf2 > "${DEST}/size-pico2.txt"
+            cp configure.log build.log configure-pico2.log build-pico2.log "${DEST}/"
           done
 
-          export UF2_SHA256 UF2_SIZE BUILT_AT
+          export UF2_SHA256 UF2_SIZE UF2_PICO2_SHA256 UF2_PICO2_SIZE BUILT_AT
           UF2_SHA256="$(sha256sum build/pico_copter.uf2 | cut -d ' ' -f 1)"
           UF2_SIZE="$(stat -c '%s' build/pico_copter.uf2)"
+          UF2_PICO2_SHA256="$(sha256sum build-pico2/pico_copter.uf2 | cut -d ' ' -f 1)"
+          UF2_PICO2_SIZE="$(stat -c '%s' build-pico2/pico_copter.uf2)"
           BUILT_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
           python3 - <<'PY'
@@ -250,6 +286,22 @@ jobs:
           text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
           Path("output/manifest.json").write_text(text, encoding="utf-8")
           Path("site/firmware/manifest.json").write_text(text, encoding="utf-8")
+
+          # Second manifest and UF2 for Raspberry Pi Pico 2 (RP2350).
+          # Preserve the original manifest.json/UF2 for first-generation Pico.
+          manifest_pico2 = {
+              **manifest,
+              "description": "Pico 2 (RP2350)向け双方向DShot300ファームウェアです。",
+              "boardId": "pico2",
+              "boardName": "Raspberry Pi Pico 2 (RP2350)",
+              "file": "pico_copter_pico2.uf2",
+              "downloadName": "pico_copter-pico2.uf2",
+              "size": int(os.environ["UF2_PICO2_SIZE"]),
+              "sha256": os.environ["UF2_PICO2_SHA256"],
+          }
+          text2 = json.dumps(manifest_pico2, ensure_ascii=False, indent=2) + "\n"
+          Path("output/manifest-pico2.json").write_text(text2, encoding="utf-8")
+          Path("site/firmware/manifest-pico2.json").write_text(text2, encoding="utf-8")
           PY
 
       - name: Upload Pico Copter firmware

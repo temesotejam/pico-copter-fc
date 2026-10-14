@@ -1,6 +1,6 @@
 # Pico Copter FC
 
-Raspberry Pi Pico用のPico Copterファームウェアを、GitHub Actionsでコンパイルし、最新のUF2をGitHub Pagesからダウンロードするためのリポジトリです。
+Raspberry Pi PicoおよびPico 2用のPico Copterファームウェアを、GitHub Actionsでコンパイルし、最新のUF2をGitHub Pagesからダウンロードするためのリポジトリです。
 
 
 ## 派生元と移植範囲
@@ -64,9 +64,34 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
+## Raspberry Pi Pico 2（RP2350）対応
+
+GitHub Actionsでは**初代Pico (RP2040) と Pico 2 (RP2350)**を同じソースコードから**別々にビルド**します。
+Pico 2に初代Pico用UF2を書き込まず、必ず対象基板に合ったファイルを使ってください。
+
+| 基板 | CMakeの指定 | 配布ファイル |
+|---|---|---|
+| Raspberry Pi Pico | `-DPICO_BOARD=pico` | `pico_copter.uf2` |
+| **Raspberry Pi Pico 2** | **`-DPICO_BOARD=pico2`** | **`pico_copter_pico2.uf2`** |
+
+GitHub Pagesで対象基板を選択できます。互換性のため初代Pico用の
+`firmware/manifest.json` と `pico_copter.uf2` は維持し、
+Pico 2用には `manifest-pico2.json` を追加しています。
+
+- GPIO2/3/14/15の双方向DShot300、GPIO6サーボPWM、PWMスライス7の制御周期、
+  400 Hz角速度制御、100 Hz姿勢制御、SBUSフェイルセーフ、CH5ログ、eRPM監視の仕様は共通です。
+- 初代Picoのシステムクロックは標準125 MHz、Pico 2は標準150 MHz。
+  **PWM分周比を起動時にクロックから計算**するため、どちらも
+  制御周期とサーボPWM周期を400 Hz（2.5 ms）に維持します。
+  PIOの双方向DShot300送受信クロックも従来どおり動的に計算します。
+- PID/EKF、モータミキシング、eRPMの用途（USB診断だけ）、ログの38項目に変更はありません。
+- Pico 2でのコンパイルとUF2生成はGitHub Actionsで検証できますが、
+  実機での通信成功率・制御周期のジッタは未検証です。
+  プロペラを外してモータ停止・各GPIOの信号・eRPM受信を確認してください。
+
 ## 双方向DShot300：4モータのeRPM監視
 
-RP2040のPIO0（4ステートマシン）で**双方向DShot300**を送受信します。配線は以前と同じです。
+RP2040/RP2350のPIO0（4ステートマシン）で**双方向DShot300**を送受信します。配線は以前と同じです。
 
 | モータ | GPIO | Pico物理ピン |
 |---|---:|---:|
@@ -185,14 +210,14 @@ cmake --build build --parallel
 生成物は次です。
 
 ```text
-firmware/pico_copter/build/pico_copter.uf2
+firmware/pico_copter/build/pico_copter.uf2（設定した基板向け）
 ```
 
 ## 依存関係
 
 | 項目 | 固定値 |
 |---|---|
-| 対象ボード | `pico` |
+| 対象ボード | `pico` / `pico2` |
 | Pico SDK | `2.3.0` |
 | Eigen | `3.4.0` |
 | Eigenコミット | `3147391d946bb4b6c68edd901f2add6ac1f31f8c` |
@@ -239,7 +264,7 @@ build.log
 
 ## UF2の書き込み
 
-1. Pagesから`pico_copter-pico.uf2`をダウンロードする
+1. Pagesで対象基板を選び、Pico 2なら`pico_copter-pico2.uf2`をダウンロードする
 2. Picoの`BOOTSEL`ボタンを押したままUSB接続する
 3. 表示された`RPI-RP2`ドライブへUF2をコピーする
 4. コピー後、Picoが自動的に再起動する

@@ -1,5 +1,6 @@
 const elements = {
   status: document.querySelector("#status"),
+  boardChoice: document.querySelector("#board-choice"),
   description: document.querySelector("#description"),
   board: document.querySelector("#board"),
   filename: document.querySelector("#filename"),
@@ -16,13 +17,25 @@ function formatBytes(bytes) {
   return `${new Intl.NumberFormat("ja-JP").format(bytes)} bytes`;
 }
 
+let latestRequestId = 0;
+
 async function loadManifest() {
+  const requestId = ++latestRequestId;
+  const board = elements.boardChoice.value;
+  const manifestFile = board === "pico2" ? "manifest-pico2.json" : "manifest.json";
+  elements.download.classList.add("disabled");
+  elements.download.setAttribute("aria-disabled", "true");
+  elements.download.removeAttribute("href");
+  elements.status.textContent = "ビルド情報を取得しています…";
+  elements.status.className = "";
   try {
-    const response = await fetch(`./firmware/manifest.json?t=${Date.now()}`, {
+    const response = await fetch(`./firmware/${manifestFile}?t=${Date.now()}`, {
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`manifest.json: HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`${manifestFile}: HTTP ${response.status}`);
     const manifest = await response.json();
+    if (requestId !== latestRequestId) return;
+    if (manifest.boardId !== board) throw new Error("基板情報が一致しません");
 
     elements.status.textContent = "公開中";
     elements.status.className = "good";
@@ -40,10 +53,12 @@ async function loadManifest() {
     elements.download.classList.remove("disabled");
     elements.download.removeAttribute("aria-disabled");
   } catch (error) {
+    if (requestId !== latestRequestId) return;
     elements.status.textContent = "まだ公開されたUF2がありません";
     elements.status.className = "error";
     elements.description.textContent = error instanceof Error ? error.message : String(error);
   }
 }
 
+elements.boardChoice.addEventListener("change", () => { void loadManifest(); });
 void loadManifest();
