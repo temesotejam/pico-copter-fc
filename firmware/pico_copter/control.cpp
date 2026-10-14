@@ -122,7 +122,10 @@ void loop_400Hz(void)
       link.healthy, new_failsafe_event, Chdata[2] <= CH3MIN + 80,
       !arm_gesture_held());
   rc_failsafe_latched = !rc_allowed;
-  if (!rc_allowed) {
+  // Keep gyro-bias and Kalman startup independent of RC link availability.
+  // A missing/unsafe SBUS link must prevent arming, not prevent calibration.
+  // During Arm_flag=0/1 only STOP motor commands are emitted below.
+  if (!rc_allowed && Arm_flag != 0 && Arm_flag != 1) {
     motor_stop(); // Sends the ESC minimum command, not a power disconnect.
     if (Arm_flag == 2 || Arm_flag == 4) {
       flight_log_freeze();
@@ -138,8 +141,27 @@ void loop_400Hz(void)
     phi_pid.reset();
     theta_pid.reset();
     psi_pid.reset();
-    gpio_put(LED_PIN, 1);
+    // After calibration the usual disarmed LED blink should remain
+    // visible even with no SBUS signal. This does NOT release failsafe.
+    if (Arm_flag == 3) {
+      if (LedBlinkCounter < 10) {
+        gpio_put(LED_PIN, 1);
+        ++LedBlinkCounter;
+      } else if (LedBlinkCounter < 100) {
+        gpio_put(LED_PIN, 0);
+        ++LedBlinkCounter;
+      } else {
+        LedBlinkCounter = 0;
+      }
+    } else {
+      gpio_put(LED_PIN, 1);
+    }
     return;
+  }
+
+  if (Arm_flag == 0 || Arm_flag == 1) {
+    // LED off while the gyro bias and Kalman startup are still running.
+    gpio_put(LED_PIN, 0);
   }
 
   if (Arm_flag==0)
