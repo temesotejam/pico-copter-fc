@@ -23,10 +23,33 @@ int main() {
     assert(throttle_from_legacy_duty(-1.0f) == kStop);
     assert(throttle_from_legacy_duty(NAN) == kStop);
     assert(throttle_from_legacy_duty(INFINITY) == kStop);
-    assert(throttle_from_legacy_duty(0.1f) >= kMinimumThrottle);
-    assert(throttle_from_legacy_duty(0.95f) < kMaximumThrottle);
-    assert(throttle_from_legacy_duty(0.95f) > throttle_from_legacy_duty(0.10f));
-    assert(throttle_from_legacy_duty(10.0f) <= kMaximumThrottle);
+    // Every running DShot value 48..2047 must be reachable from the
+    // existing motor mixer's 0.10..0.95 duty interval.
+    assert(throttle_from_legacy_duty(kLegacyMinimumRunningDuty) == kMinimumThrottle);
+    assert(throttle_from_legacy_duty(kLegacyMaximumRunningDuty) == kMaximumThrottle);
+    assert(throttle_from_legacy_duty(0.001f) == kMinimumThrottle);
+    assert(throttle_from_legacy_duty(1.0f) == kMaximumThrottle);
+    assert(throttle_from_legacy_duty(10.0f) == kMaximumThrottle);
+    assert(throttle_from_legacy_duty(0.525f) >= 1047);
+    assert(throttle_from_legacy_duty(0.525f) <= 1048);
+
+    uint16_t previous = 0;
+    for (int i = 0; i <= 10000; ++i) {
+        const float duty = kLegacyMinimumRunningDuty +
+            (kLegacyMaximumRunningDuty - kLegacyMinimumRunningDuty) * i / 10000.0f;
+        const uint16_t command = throttle_from_legacy_duty(duty);
+        assert(command >= kMinimumThrottle && command <= kMaximumThrottle);
+        assert(command >= previous);
+        previous = command;
+    }
+    // Test all 2000 running values, including boundaries, for gaps.
+    for (uint16_t cmd = kMinimumThrottle; cmd <= kMaximumThrottle; ++cmd) {
+        const float position = static_cast<float>(cmd - kMinimumThrottle) /
+            static_cast<float>(kMaximumThrottle - kMinimumThrottle);
+        const float duty = kLegacyMinimumRunningDuty +
+            (kLegacyMaximumRunningDuty - kLegacyMinimumRunningDuty) * position;
+        assert(throttle_from_legacy_duty(duty) == cmd);
+    }
     assert(pio_word(kStop) == 0);
     assert(pio_word(48) == 0x06060000u);
     std::puts("DShot300 encoding, CRC, stop and throttle mapping passed");

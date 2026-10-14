@@ -37,20 +37,24 @@ inline uint32_t bidirectional_pio_word(uint16_t throttle) {
 // In bidirectional DShot, telemetry arrives on the motor signal wire.
 // The outgoing frame uses the INVERTED CRC nibble (unlike one-way DShot).
 
-// Preserve the old PWM output's approximate normalized ESC range:
-// the old duty 0..1 mapped to 1100..1900 us (assuming ESC 1000..2000 us).
-// A positive duty is a running command; zero/negative/nonfinite stop.
-// This is an approximation, NOT guaranteed to match ESC PWM motor RPM.
+// Use the entire running-throttle range of DShot300. The EXISTING mixer
+// clamps each running motor's duty to 0.10..0.95 in control.cpp. Map those
+// endpoints to DShot 48..2047 without changing PID, mixing, or arm/stop rules.
+// Zero/negative/nonfinite duty is a motor STOP (DShot 0), never a command 1..47.
+// This deliberately changes motor speed response relative to prior PWM/DShot
+// versions; check behavior WITHOUT propellers before attempting a flight.
+constexpr float kLegacyMinimumRunningDuty = 0.10f;
+constexpr float kLegacyMaximumRunningDuty = 0.95f;
 inline uint16_t throttle_from_legacy_duty(float duty) {
     if (!std::isfinite(duty) || duty <= 0.0f) return kStop;
-    if (duty > 1.0f) duty = 1.0f;
-    const float normalized = 0.10f + 0.80f * duty;
-    const float value = static_cast<float>(kMinimumThrottle)
-                      + static_cast<float>(kMaximumThrottle - kMinimumThrottle) * normalized;
-    uint16_t command = static_cast<uint16_t>(value + 0.5f);
-    if (command < kMinimumThrottle) command = kMinimumThrottle;
-    if (command > kMaximumThrottle) command = kMaximumThrottle;
-    return command;
+    if (duty <= kLegacyMinimumRunningDuty) return kMinimumThrottle;
+    if (duty >= kLegacyMaximumRunningDuty) return kMaximumThrottle;
+
+    const float position = (duty - kLegacyMinimumRunningDuty) /
+        (kLegacyMaximumRunningDuty - kLegacyMinimumRunningDuty);
+    const float value = static_cast<float>(kMinimumThrottle) +
+        static_cast<float>(kMaximumThrottle - kMinimumThrottle) * position;
+    return static_cast<uint16_t>(value + 0.5f);
 }
 
 // PIO OUT shifts left with autopull threshold 16. Put the 16 packet bits at
