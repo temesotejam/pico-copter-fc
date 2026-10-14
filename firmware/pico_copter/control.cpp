@@ -7,6 +7,7 @@
 #include "sbus_parser.hpp"
 #include "flight_log_ring.hpp"
 #include "log_capture_gate.hpp"
+#include "motor_mix_scaling.hpp"
 #include "pico/sync.h"
 
 //Sensor data
@@ -517,23 +518,20 @@ void rate_control(void)
   Q_com = q_pid.update(q_err);
   R_com = r_pid.update(r_err);
 
-  //Motor Control
-  // 1250/11.1=112.6
-  // 1/11.1=0.0901
-  
-  // Motor mixing uses I-26 coefficients and output scaling; only the yaw (R_com) signs match the original Pico Copter.
-  FR_duty = (T_ref +(-P_com +Q_com -R_com))*0.9;
-  FL_duty = (T_ref +( P_com +Q_com +R_com))*0.9;
-  RR_duty = (T_ref +(-P_com -Q_com +R_com))*0.9;
-  RL_duty = (T_ref +( P_com -Q_com -R_com))*0.9;
-  //FR_duty = (T_ref)*0.0901;
-  //FL_duty = (T_ref)*0.0901;
-  //RR_duty = (T_ref)*0.0901;
-  //RL_duty = (T_ref)*0.0901;
-  
-  float minimum_duty=0.1;
-  const float maximum_duty=0.95;
-  minimum_duty = Disable_duty;
+  // Motor duty scaling: the old direct (T_ref + corrections)*0.9
+  // saturated BEFORE the motor-enable throttle threshold. Normalize the
+  // usable CH3 range to [Disable_duty .. 0.95] and scale PID corrections by
+  // BATTERY_VOLTAGE. PID gains, axis signs, yaw convention and motor STOP
+  // threshold below are unchanged.
+  const float minimum_duty = Disable_duty;
+  const float maximum_duty = 0.95f;
+  const motor_output::MotorDuties mixed = motor_output::mix(
+      T_ref, P_com, Q_com, R_com,
+      BATTERY_VOLTAGE, Disable_duty, minimum_duty, maximum_duty);
+  FR_duty = mixed.fr;
+  FL_duty = mixed.fl;
+  RR_duty = mixed.rr;
+  RL_duty = mixed.rl;
 
   if (FR_duty < minimum_duty) FR_duty = minimum_duty;
   if (FR_duty > maximum_duty) FR_duty = maximum_duty;
