@@ -57,7 +57,7 @@ void init_oneway_dshot() {
         sm_config_set_clkdiv(&cfg, divisor);
         pio_gpio_init(dshot_pio, pin);
         pio_sm_init(dshot_pio, sm, offset, &cfg);
-        pio_sm_set_pins(dshot_pio, sm, 0u); // Idle LOW (not inverted).
+        // Idle LOW is driven by PIO side-set while waiting for the TX FIFO.
         pio_sm_set_consecutive_pindirs(dshot_pio, sm, pin, 1, true);
     }
     for (uint i = 0; i < MOTOR_COUNT; ++i)
