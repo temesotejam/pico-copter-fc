@@ -70,7 +70,7 @@ int main(void)
       if (Arm_flag != 4 && Logoutputflag == 0 && stdio_usb_connected()) {
         const RadioDebugSnapshot radio = radio_debug_snapshot();
         const ControlDebugSnapshot ctrl = control_debug_snapshot();
-        const DShotTelemetrySnapshot dshot = dshot_telemetry_snapshot();
+        const DShotTxSnapshot dshot = dshot_tx_snapshot();
 
         printf("#DBG STATE t_ms=%lu arm=%u lock=%u rc_latch=%u "
                "record=%u overg=%u\n",
@@ -112,25 +112,13 @@ int main(void)
 
         const char* names[4] = {"FR", "FL", "RR", "RL"};
         for (int i = 0; i < 4; ++i) {
-          const DShotMotorTelemetry& m = dshot.motors[i];
-          const uint32_t success_percent = m.tx
-              ? static_cast<uint32_t>((static_cast<uint64_t>(m.rx_ok) * 100u) / m.tx)
-              : 0u;
-          printf("#DShot300 %s duty=%.3f cmd=%u pkt=0x%04x "
-                 "eRPM=%ld valid=%u rx=%lu/%lu (%lu%%) "
-                 "timeout=%lu gcr=%lu crc=%lu other=%lu busy=%lu\n",
+          const DShotMotorTxStatus& m = dshot.motors[i];
+          printf("#DShot300 %s mode=oneway duty=%.3f cmd=%u pkt=0x%04x "
+                 "tx=%lu busy=%lu\n",
                  names[i], static_cast<double>(m.requested_duty),
                  static_cast<unsigned int>(m.last_command),
                  static_cast<unsigned int>(m.last_frame),
-                 m.fresh ? static_cast<long>(m.erpm) : -1L,
-                 m.fresh ? 1u : 0u,
-                 static_cast<unsigned long>(m.rx_ok),
                  static_cast<unsigned long>(m.tx),
-                 static_cast<unsigned long>(success_percent),
-                 static_cast<unsigned long>(m.rx_timeout),
-                 static_cast<unsigned long>(m.rx_bad_gcr),
-                 static_cast<unsigned long>(m.rx_bad_crc),
-                 static_cast<unsigned long>(m.rx_other),
                  static_cast<unsigned long>(m.tx_busy));
         }
       }

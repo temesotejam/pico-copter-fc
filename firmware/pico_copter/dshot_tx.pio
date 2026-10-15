@@ -1,40 +1,15 @@
-; Bidirectional DShot300 TX / eRPM RX. Adapted from pio-dshot (MIT)
-; Copyright (c) 2023 Simon Wunderlich.
-; Reference: https://github.com/simonwunderlich/pio-dshot
-; The pin is idle HIGH; outgoing DShot is inverted, and so is the CRC nibble.
-; Clock is 40 PIO cycles per TX bit (DShot300 => 12 MHz PIO clock).
+; Standard one-way DShot300: non-inverted data and standard CRC.
+; 8 PIO cycles/bit at 2.4 MHz = 3.333 us per bit, 53.33 us per frame.
+; DShot 0: HIGH 3 cycles, LOW 5; DShot 1: HIGH 6, LOW 2.
+; Idle LOW. The PIO stalls with sideset=0 if the TX FIFO is empty.
+; Derived from the previously used one-way DShot300 program in this repo.
 .program dshot_tx
+.side_set 1
 .wrap_target
-    set pindirs, 1
-    pull
-    set x, 15
-tx_loop:
-    set pins, 0 [14]
-    out pins, 1 [14]
-    set pins, 1 [8]
-    jmp x-- tx_loop
-
-    ; Fixed turnaround delay (~25 microseconds) sent by host.
-    pull
-    mov x, osr
-after_tx:
-    jmp x-- after_tx
-
-    ; Release the pin and capture 21 NRZI telemetry bits.
-    set pindirs, 0
-    set x, 31
-wait_rx:
-    jmp !x finish_rx
-    jmp x-- check_rx_pin
-check_rx_pin:
-    jmp pin wait_rx
-start_rx:
-    set x, 20 [8]
-rx_loop:
-    in pins, 1 [30]
-    jmp x-- rx_loop
-finish_rx:
-    push
-    set pindirs, 1
-    set pins, 1 [2]
+bitloop:
+    out x, 1            side 0 [1] ; 2 cycles LOW
+    jmp !x bit_zero     side 1 [2] ; 3 cycles HIGH
+    jmp bitloop         side 1 [2] ; 3 more HIGH (1 bit)
+bit_zero:
+    nop                 side 0 [2] ; 3 LOW (0 bit)
 .wrap
