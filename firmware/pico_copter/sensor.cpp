@@ -1,4 +1,5 @@
 #include "sensor.hpp"
+#include "debug_usb.hpp"
 
 int16_t data_raw_acceleration[3];
 int16_t data_raw_angular_rate[3];
@@ -15,10 +16,6 @@ sensbus_t Ins_bus={spi1, PIN_CSAG};
 sensbus_t Mag_bus={spi1, PIN_CSM};
 stmdev_ctx_t Imu_h;
 stmdev_ctx_t Mag_h;
-
-//ローカル関数宣言
-void printData(void);
-
 
 void imu_mag_init(void)
 {
@@ -45,7 +42,7 @@ void imu_mag_init(void)
   if (whoamI.imu != LSM9DS1_IMU_ID || whoamI.mag != LSM9DS1_MAG_ID) {
     while (1) {
       /* manage here device not found */
-      printf("Device not found !\n");
+      debug_usb::sensor_not_found();
       sleep_ms(1000);
     }
   }
@@ -120,38 +117,5 @@ void imu_mag_data_read(void)
     magnetic_field_mgauss[2] = lsm9ds1_from_fs16gauss_to_mG(
                                  data_raw_magnetic_field[2]);
   }
-  //printData();
 }
 
-void printData(void)
-{
-    printf("%13.8f\t%13.8f\t%13.8f\t%13.8f\t%13.8f\t%13.8f\t",
-            acceleration_mg[0], acceleration_mg[1], acceleration_mg[2],
-            angular_rate_mdps[0], angular_rate_mdps[1], angular_rate_mdps[2]);
-    printf("%13.8f\t%13.8f\t%13.8f\r\n",
-            magnetic_field_mgauss[0], magnetic_field_mgauss[1],
-            magnetic_field_mgauss[2]);
-}  
-
-
-#if 0
-int main(void)
-{
-
-  stdio_init_all();
-  imu_mag_init();
-  while(1)
-  {
-    imu_mag_data_read();
-    printf((char *)tx_buffer_imu,
-            "IMU-[mg]:\t%13.8f\t%13.8f\t%13.8f\t[mdps]:\t%13.8f\t%13.8f\t%13.8f\t",
-            acceleration_mg[0], acceleration_mg[1], acceleration_mg[2],
-            angular_rate_mdps[0], angular_rate_mdps[1], angular_rate_mdps[2]);
-    printf((char *)tx_buffer_mag, "MAG-[mG]:\t%13.8f\t%13.8f\t%13.8f\r\n",
-            magnetic_field_mgauss[0], magnetic_field_mgauss[1],
-            magnetic_field_mgauss[2]);
-    sleep_ms(10);
-  }
-  return 0;
-}
-#endif

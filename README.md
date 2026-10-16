@@ -128,6 +128,21 @@ USB CDCに`#DBG STATE`（アーム状態）、`#DBG SBUS`（CH1〜6と受信鮮�
 
 **安全上の条件:** レベルシフタや別の出力ドライバが同じESC信号線を駆動しない配線で使用してください。PicoのGPIOは5 V耐性ではないため、ESC側の信号線が3.3 V系であることを確認します。プロペラを外し、まずモータ1組で検証してください。
 
+## USB診断の整理
+
+通常のUSB CDCデバッグ表示を **`firmware/pico_copter/debug_usb.cpp`** に集約しています。`debug_usb.hpp` がその呼び出し口と表示のON/OFF設定です。`pico_copter.cpp` は起動時に `debug_usb::startup_countdown()`/`startup_complete()` を呼び、メインループで `debug_usb::poll()` を呼ぶだけです。IMU初期化に失敗した場合も `sensor.cpp` から `debug_usb::sensor_not_found()` を呼びます。
+
+| 変更したいこと | 修正箇所 |
+|---|---|
+| SBUS / ミキサ / DShot eRPMの表示項目や書式 | `debug_usb.cpp` |
+| 通常の周期的USB診断をまとめてOFF | `debug_usb.hpp` の `kEnablePeriodicDiagnostics` |
+| RC状態変化メッセージをOFF | `debug_usb.hpp` の `kEnableRcStateMessages` |
+| 送受信・制御データの取得処理 | 各機能の `*_debug_snapshot()`（出力自体は担当しない） |
+
+ディスアーム時は約0.5秒ごと、アーム時は約1秒ごとの表示を維持します。**デバッグの`printf`は400 Hz割り込みやコア1の制御タスクには置いていません。** USB未接続時、およびCH5記録データ出力時は通常診断を表示しません。
+
+**例外：CH5の38項目リングログ・P/Q/R共分散・PIDゲインのエクスポートだけは `control.cpp` の`log_output()`に残しています。** これは実験用データであって通常のデバッグ表示ではなく、既存の行形式と書き出し手順を変えないためです。過去の呼び出されていない単発`output_data()`、`output_sensor_raw_data()`、`printData()`と無効なサンプルの`printf`は整理しました。
+
 ## ファームウェアとビルダーの分離
 
 マイコンへ書き込むプログラムは、次の1フォルダへまとめています。
@@ -140,7 +155,7 @@ firmware/pico_copter/
 
 ```text
 firmware/pico_copter/
-├─ pico_copter.cpp / .hpp
+├─ pico_copter.cpp / .hpp, debug_usb.cpp / .hpp
 ├─ control.cpp / .hpp
 ├─ ekf.cpp / .hpp
 ├─ sensor.cpp / .hpp

@@ -91,8 +91,6 @@ void loop_400Hz(void);
 void rate_control(void);
 void sensor_read(void);
 void angle_control(void);
-void output_data(void);
-void output_sensor_raw_data(void);
 void kalman_filter(void);
 void logging(void);
 void flight_log_freeze(void);
@@ -571,20 +569,10 @@ void rate_control(void)
       set_duty_rl(RL_duty);
     }
     else motor_stop();
-    //printf("%12.5f %12.5f %12.5f %12.5f\n",FR_duty, FL_duty, RR_duty, RL_duty);
   }
- 
-  //printf("\n");
 
-  //printf("%12.5f %12.5f %12.5f %12.5f %12.5f %12.5f %12.5f %12.5f\n", 
-  //    Elapsed_time, fr_duty, fl_duty, rr_duty, rl_duty, p_rate, q_rate, r_rate);
-  //printf("%12.5f %12.5f %12.5f %12.5f %12.5f %12.5f %12.5f\n", 
-  //    Elapsed_time, p_com, q_com, r_com, p_ref, q_ref, r_ref);
-  //printf("%12.5f %12.5f %12.5f %12.5f %12.5f %12.5f %12.5f\n", 
-  //    Elapsed_time, Phi, Theta, Psi, Phi_bias, Theta_bias, Psi_bias);
-  //Elapsed_time = Elapsed_time + 0.0025;
-  //Logging
-  //logging();
+  // Human-readable USB diagnostics are emitted from debug_usb.cpp only.
+  // The CH5 flight recorder is independent of the USB status stream.
 }
 
 void angle_control(void)
@@ -981,42 +969,6 @@ void printPQR(void)
     }
     printf("\n");
   }
-}
-
-void output_data(void)
-{
-  printf("%9.3f,"
-         "%13.8f,%13.8f,%13.8f,%13.8f,"
-         "%13.8f,%13.8f,%13.8f,"
-         "%6lu,%6lu,"
-         "%13.8f,%13.8f,%13.8f,"
-         "%13.8f,%13.8f,%13.8f,"
-         "%13.8f,%13.8f,%13.8f"
-         //"%13.8f"
-         "\n"
-            ,Elapsed_time//1
-            ,Xe(0,0), Xe(1,0), Xe(2,0), Xe(3,0)//2~5 
-            ,Xe(4,0), Xe(5,0), Xe(6,0)//6~8
-            //,Phi-Phi_bias, Theta-Theta_bias, Psi-Psi_bias//6~8
-            ,D_time, D_time2//10,11
-            ,Ax, Ay, Az//11~13
-            ,Wp, Wq, Wr//14~16
-            ,Mx, My, Mz//17~19
-            //,mag_norm
-        ); //20
-}
-void output_sensor_raw_data(void)
-{
-  printf("%9.3f,"
-         "%13.5f,%13.5f,%13.5f,"
-         "%13.5f,%13.5f,%13.5f,"
-         "%13.5f,%13.5f,%13.5f"
-         "\n"
-            ,Elapsed_time//1
-            ,Ax, Ay, Az//2~4
-            ,Wp, Wq, Wr//5~7
-            ,Mx, My, Mz//8~10
-        ); //20
 }
 
 void kalman_filter(void)

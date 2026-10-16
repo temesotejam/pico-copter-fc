@@ -58,6 +58,7 @@ endif()
 
 add_executable(pico_copter
     pico_copter.cpp
+    debug_usb.cpp
     sensor.cpp
     ekf.cpp
     lsm9ds1_reg.c

@@ -105,6 +105,14 @@ cmake --build build-dshot600 --parallel
 
 起動時の`#DShot CONFIG rate=600 kbps mode=bidir control=400Hz`と`#DShot600 RL mode=bidir ...`で適用した速度を確認できます。300以外のeRPM動作は**未検証**なので、最初はプロペラを外して波形・返信・受信率を測定してください。
 
+## USBデバッグの管理場所
+
+通常のUSB CDC表示は **[`debug_usb.cpp`](debug_usb.cpp)** にまとめています。出力する文字列、表示周期（非アーム時約500 ms、アーム時約1秒）、SBUS・DShot・ミキサの各項目はこのファイルで編集できます。**[`debug_usb.hpp`](debug_usb.hpp)** に表示の一括切替設定 `kEnablePeriodicDiagnostics`、`kEnableRcStateMessages` を用意しています。
+
+`pico_copter.cpp` は起動時メッセージと `debug_usb::poll()` を呼ぶだけで、`sensor.cpp` の「Device not found !」も`debug_usb::sensor_not_found()`で表示します。各機能はスナップショットを提供するだけなので、メインループでまとめて文字列化します。**USB出力を制御割り込みやコア1では実行しません。** USB未接続時とCH5ログ出力中には周期診断を止めます。
+
+CH5の100 Hz・38項目データ、P/Q/R行列、PIDゲインはCSV風実験ログの一部なので、`control.cpp`の`log_output()`を変更せず別扱いとしています。不要になっていた未使用の単発デバッグ関数は削除しました。
+
 ## 現行ベースライン：初代Picoの双方向DShot300
 
 **2026-10-16、初代Pico（RP2040）とレベルシフタ未実装の別基板で、ESC・モータ1組によるeRPM取得を実機確認しました。** スロットル操作へのeRPMの追従も良好との報告です。4基同時・実飛行・Pico 2の双方向受信の動作保証はありません。
