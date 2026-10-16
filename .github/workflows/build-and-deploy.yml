@@ -270,7 +270,7 @@ jobs:
           manifest = {
               "appId": "pico_copter",
               "appName": "Pico Copter",
-              "description": "firmware/pico_copter内のプログラムからビルドしたUF2です。",
+              "description": "Raspberry Pi Pico (RP2040) 用の双方向DShot300 / eRPM実験版です。レベルシフタなしの専用回路で使用してください。",
               "boardId": "pico",
               "boardName": "Raspberry Pi Pico",
               "file": "pico_copter.uf2",
@@ -294,7 +294,7 @@ jobs:
           # Preserve the original manifest.json/UF2 for first-generation Pico.
           manifest_pico2 = {
               **manifest,
-              "description": "Pico 2 (RP2350)向け一方向DShot300ファームウェアです（eRPM受信なし）。",
+              "description": "Pico 2 (RP2350)向け双方向DShot300実験版です。今回の評価対象は初代Pico (RP2040) です。",
               "boardId": "pico2",
               "boardName": "Raspberry Pi Pico 2 (RP2350)",
               "file": "pico_copter_pico2.uf2",
