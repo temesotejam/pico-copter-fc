@@ -31,6 +31,13 @@ int main() {
     assert(bidirectional_frame(0) == 0x000f);
     assert(bidirectional_pio_word(0) == 0xfff00000u);
     assert(bidirectional_frame(48) == (frame(48) ^ 0x000fu));
+    // Real logs captured these packet values for STOP and MAX while
+    // testing the controller. Guard their bit order and inverse CRC.
+    assert(bidirectional_frame(2047) == 0xffe1u);
+    assert(bidirectional_pio_word(2047) == 0x001e0000u);
+    assert(bidirectional_frame(0xffffu) == bidirectional_frame(2047));
+    assert(bidirectional_pio_word(48) ==
+           (static_cast<uint32_t>(~bidirectional_frame(48) & 0xffffu) << 16));
     for (uint16_t t = 0; t < 2048; ++t) {
         const uint16_t out = bidirectional_frame(t);
         const uint16_t payload = out >> 4;

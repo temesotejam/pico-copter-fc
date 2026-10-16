@@ -2,9 +2,14 @@
  * Bidirectional DShot300 / eRPM on Raspberry Pi Pico (RP2040).
  * Direct connection to ESC signal, without a one-way level shifter.
  *
- * Motor output is deliberately fire-and-forget from the controller's point
- * of view. All four responses are collected NON-BLOCKING at the next 400 Hz
- * PWM wrap IRQ, before four new packets are queued. No PID path reads eRPM.
+ * The 400 Hz IRQ computes motor commands, then queues bidirectional
+ * DShot300 frames. The previous cycle's eRPM replies are read WITHOUT
+ * waiting for the ESC. Telemetry is USB diagnostics only, never feedback
+ * for PID, EKF or the motor mixer.
+ *
+ * The PIO TX/RX instruction sequence and timing are kept identical to
+ * the RP2040 direct-wired version that produced real eRPM on 2026-10-16.
+ * Do not change PIO timing/pin direction without separate bench testing.
  *
  * TX/RX PIO program adapted from simonwunderlich/pio-dshot (MIT):
  * https://github.com/simonwunderlich/pio-dshot
@@ -21,9 +26,8 @@ uint8_t ESC_calib = 0; // DShot does not require PWM throttle calibration.
 
 namespace {
 constexpr uint16_t PWM_WRAP = 3124;
-// Pico runs at 125 MHz, Pico 2 at 150 MHz by default. Compute the
-// divider at startup, so the PWM-slice timebase stays EXACTLY 400 Hz
-// on both chips instead of silently changing to 480 Hz on Pico 2.
+// Compute the PWM-slice divider from the actual system clock so the
+// 400 Hz control timer stays unchanged on Pico (and builds for Pico 2).
 constexpr uint32_t PWM_FREQUENCY_HZ = 400;
 constexpr uint16_t SERVO_INITIAL_LEVEL = 625;
 constexpr uint MOTOR_COUNT = 4;
@@ -31,6 +35,7 @@ constexpr uint MOTOR_COUNT = 4;
 constexpr uint MOTOR_PINS[MOTOR_COUNT] = {
     PWM_PIN_FR, PWM_PIN_FL, PWM_PIN_RR, PWM_PIN_RL
 };
+// Bidirectional PIO is 40 cycles/bit (NOT the older one-way PIO's 8).
 constexpr uint32_t PIO_CYCLES_PER_BIT = 40;
 constexpr uint32_t RX_TURNAROUND_CYCLES = 25u * dshot::kBitRate
                                               * PIO_CYCLES_PER_BIT / 1000000u;
@@ -142,7 +147,7 @@ void pwm_wrap_irq_handler() {
     pwm_clear_irq(pwm_gpio_to_slice_num(PWM_MAINLOOP_PIN));
     // Existing 400Hz motor and SBUS/failsafe calculations run unchanged.
     MAINLOOP();
-    // No blocking RX calls: read the PREVIOUS cycle, then start next cycle.
+    // Read the previous cycle's RX FIFO only; do not wait for the ESC.
     collect_previous_telemetry();
     start_next_exchange();
 }

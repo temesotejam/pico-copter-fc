@@ -127,7 +127,7 @@ void loop_400Hz(void)
   // A missing/unsafe SBUS link must prevent arming, not prevent calibration.
   // During Arm_flag=0/1 only STOP motor commands are emitted below.
   if (!rc_allowed && Arm_flag != 0 && Arm_flag != 1) {
-    motor_stop(); // Sends the ESC minimum command, not a power disconnect.
+    motor_stop(); // DShot 0 (STOP), not a physical motor power disconnect.
     if (Arm_flag == 2 || Arm_flag == 4) {
       flight_log_freeze();
       Arm_flag = 3;
@@ -167,7 +167,7 @@ void loop_400Hz(void)
 
   if (Arm_flag==0)
   {
-      // DShot ESCs need repeated STOP frames during initial calibration.
+      // Continue DShot 0 (STOP) while the sensor calibration runs.
       // Keep the motor-control loop timing unchanged.
       motor_stop();
       Elevator_center = 0.0;

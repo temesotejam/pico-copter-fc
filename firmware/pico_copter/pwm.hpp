@@ -1,7 +1,7 @@
 /*
- * pwm.hpp
- * Header file for PWM function
-*/
+ * Motor DShot300 GPIO mapping and telemetry diagnostics.
+ * Servo output and the 400 Hz scheduling timer still use hardware PWM.
+ */
 #ifndef PWM_HPP
 #define PWM_HPP
 #include <stdio.h>
@@ -38,8 +38,9 @@ void set_duty_fl(float duty);
 void set_duty_rr(float duty);
 void set_duty_rl(float duty);
 
-// Diagnostic telemetry only. No eRPM feedback into PID, EKF, or mixing.
-// Array order: FR, FL, RR, RL. A valid zero is distinct from unavailable.
+// eRPM is diagnostic only: NEVER used by PID, EKF or motor mixing.
+// Motor array order: FR, FL, RR, RL. fresh=1 with erpm=0 means a valid
+// stopped-motor response; fresh=0 means telemetry is unavailable/stale.
 struct DShotMotorTelemetry {
     uint32_t erpm;
     uint32_t tx;

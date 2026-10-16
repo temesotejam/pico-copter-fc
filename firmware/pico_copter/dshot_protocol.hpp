@@ -6,6 +6,10 @@
 
 namespace dshot {
 constexpr uint32_t kBitRate = 300000;
+// Compatibility constants for the earlier ONE-WAY DShot300 PIO. The
+// confirmed-working bidirectional implementation uses 40 PIO cycles/bit
+// at 12 MHz; see PIO_CYCLES_PER_BIT in pwm.cpp. Do not use the following
+// one-way clock constants to configure bidirectional reception.
 constexpr uint32_t kPioCyclesPerBit = 8;
 constexpr uint32_t kPioClockHz = kBitRate * kPioCyclesPerBit;
 constexpr uint16_t kStop = 0;
@@ -29,7 +33,8 @@ inline uint16_t bidirectional_frame(uint16_t throttle) {
     return static_cast<uint16_t>((payload << 4) | checksum);
 }
 
-// The PIO library sends the inverted bitstream, MSB first.
+// Active bidirectional PIO: invert the complete 16-bit logical packet,
+// place it in bits 31..16, then shift out MSB-first with MANUAL pull.
 inline uint32_t bidirectional_pio_word(uint16_t throttle) {
     return static_cast<uint32_t>(~bidirectional_frame(throttle) & 0xffffu) << 16;
 }
@@ -37,9 +42,9 @@ inline uint32_t bidirectional_pio_word(uint16_t throttle) {
 // In bidirectional DShot, telemetry arrives on the motor signal wire.
 // The outgoing frame uses the INVERTED CRC nibble (unlike one-way DShot).
 
-// Use the entire running-throttle range of DShot300. The EXISTING mixer
-// clamps each running motor's duty to 0.10..0.95 in control.cpp. Map those
-// endpoints to DShot 48..2047 without changing PID, mixing, or arm/stop rules.
+// Keep the confirmed-working duty->DShot mapping unchanged. control.cpp
+// clamps running motor duty to 0.10..0.95; map this to DShot 48..2047.
+// The PWM-era duty naming remains for compatibility with the control API.
 // Zero/negative/nonfinite duty is a motor STOP (DShot 0), never a command 1..47.
 // This deliberately changes motor speed response relative to prior PWM/DShot
 // versions; check behavior WITHOUT propellers before attempting a flight.
@@ -57,8 +62,8 @@ inline uint16_t throttle_from_legacy_duty(float duty) {
     return static_cast<uint16_t>(value + 0.5f);
 }
 
-// PIO OUT shifts left with autopull threshold 16. Put the 16 packet bits at
-// the most significant end of the 32-bit OSR, MSB first.
+// Retained for testing or restoring the older one-way DShot firmware.
+// The active bidirectional PIO uses bidirectional_pio_word(), NOT this helper.
 inline uint32_t pio_word(uint16_t command) {
     return static_cast<uint32_t>(frame(command)) << 16;
 }
