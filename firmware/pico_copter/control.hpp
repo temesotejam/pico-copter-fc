@@ -40,6 +40,32 @@ struct ControlDebugSnapshot {
 };
 ControlDebugSnapshot control_debug_snapshot(void);
 
+// Debug snapshots contain COPIES only: no direct reading of the live
+// IMU globals or Eigen matrices from the USB printing thread.
+// IMU values are expressed in the flight controller's body axes:
+// acceleration in m/s^2, gyro rates in rad/s, magnetic field normalized.
+struct ImuDebugSnapshot {
+    float ax, ay, az;
+    float wp, wq, wr;
+    float mx, my, mz;
+    uint32_t sample_time_us;
+    bool valid;
+};
+ImuDebugSnapshot imu_debug_snapshot(void);
+
+// Published as one coherent snapshot by the 100 Hz core-1 estimator.
+// Angles and biases in radians, quaternion scalar-first, EKF gyro bias
+// in estimator-native units. USB converts angles to degrees for display.
+struct AttitudeDebugSnapshot {
+    float roll, pitch, yaw;
+    float roll_bias, pitch_bias, yaw_bias;
+    float quaternion[4];
+    float gyro_bias[3];
+    uint32_t sample_time_us;
+    bool valid;
+};
+AttitudeDebugSnapshot attitude_debug_snapshot(void);
+
 //グローバル変数
 extern volatile uint8_t LockMode;
 extern volatile bool rc_failsafe_latched;

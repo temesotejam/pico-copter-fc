@@ -107,7 +107,35 @@ cmake --build build-dshot600 --parallel
 
 ## USBデバッグの管理場所
 
-通常のUSB CDC表示は **[`debug_usb.cpp`](debug_usb.cpp)** にまとめています。出力する文字列、表示周期（非アーム時約500 ms、アーム時約1秒）、SBUS・DShot・ミキサの各項目はこのファイルで編集できます。**[`debug_usb.hpp`](debug_usb.hpp)** に表示の一括切替設定 `kEnablePeriodicDiagnostics`、`kEnableRcStateMessages` を用意しています。
+通常のUSB CDC表示は **[`debug_usb.cpp`](debug_usb.cpp)** にまとめています。表示文字列と表示周期（非アーム時約500 ms、アーム時約1秒）はこのファイルで変更できます。**[`debug_usb.hpp`](debug_usb.hpp)** に以下の表示スイッチをまとめています。
+
+| `debug_usb.hpp` の設定 | 表示内容 | USB出力 |
+|---|---|---|
+| `kEnablePeriodicDiagnostics` | 周期診断全体 | 全て一括ON/OFF |
+| `kEnableRcStateMessages` | RC受信状態の変化 | `#RC` |
+| `kEnableState` | アーム・フェイルセーフなど | `#DBG STATE` |
+| `kEnableSbus` | SBUS CH1〜6・通信鮮度 | `#DBG SBUS` |
+| `kEnableImu` | 加速度とジャイロ角速度 | `#DBG IMU`、`#DBG GYRO` |
+| `kEnableMag` | 補正・正規化した地磁気ベクトル | `#DBG MAG` |
+| `kEnableAttitude` | 推定ロール・ピッチ・ヨー | `#DBG ATT` |
+| `kEnableEkf` | 推定クォータニオン・ジャイロバイアス | `#DBG EKF` |
+| `kEnablePidMixer` | T、P/Q/R、FR/FL/RR/RL | `#DBG MIX` |
+| `kEnableDShot` | DShot指令とeRPM・通信エラー | `#DShot<速度>` |
+
+`true` / `false` に変更し、ビルドし直すと表示の有無を切り替えられます。これは**表示のみ**の設定で、IMU読み込み・EKF計算・PID・DShot送受信・CH5記録には影響しません。
+
+### IMUと姿勢推定の単位・読出し方法
+
+- `#DBG IMU ax/ay/az`：コントローラの座標系での加速度、**m/s²**
+- `#DBG GYRO p/q/r`：コントローラの座標系での角速度、**rad/s**（生センサのmdpsから変換済み）
+- `#DBG MAG mx/my/mz`：地磁気を校正・正規化した**無次元の方向ベクトル**（mGではない）
+- `#DBG ATT roll_deg/pitch_deg/yaw_deg`：`Phi-Phi_bias`など**基準角を差し引いた角度、度（°）**。CH5の姿勢角記録と同じ値を度換算したもの
+- `#DBG ATT raw_*_deg`：基準角を差し引く前の推定角度、度（°）
+- `#DBG EKF q0..q3`：スカラー先頭の推定クォータニオン、`bias_p/bias_q/bias_r`：EKF内部のバイアス状態
+- `age_ms`：最後のIMU／EKF更新からの経過時間。ディスアーム時はIMU更新が止まる場合があるため、**値の新しさの判断**に使う
+- `valid=0`：起動直後などで、まだ対応するセンサ／推定結果が初回取得されていない状態
+
+IMU情報は400 Hz割り込み側の既存の値を短時間割り込み保護してコピーし、別コアで動く100 HzのEKF／姿勢推定は専用mutexで保護した**診断専用スナップショット**として受け渡します。USB表示のためにセンサ通信やEKF計算を追加したり、割り込み内で`printf`することはありません。
 
 `pico_copter.cpp` は起動時メッセージと `debug_usb::poll()` を呼ぶだけで、`sensor.cpp` の「Device not found !」も`debug_usb::sensor_not_found()`で表示します。各機能はスナップショットを提供するだけなので、メインループでまとめて文字列化します。**USB出力を制御割り込みやコア1では実行しません。** USB未接続時とCH5ログ出力中には周期診断を止めます。
 
@@ -161,6 +189,8 @@ USBが接続されていて、CH5ログ出力中でなければ、通常のメ�
 |---|---|
 | `#DBG STATE` | arm、lock、フェイルセーフ、CH5状態 |
 | `#DBG SBUS` | CH1〜6、生フレーム受信数、受信鮮度、フェイルセーフ |
+| `#DBG IMU` / `#DBG GYRO` / `#DBG MAG` | IMUと地磁気の状態・経過時間 |
+| `#DBG ATT` / `#DBG EKF` | 姿勢角（°）、クォータニオン・バイアス・更新鮮度 |
 | `#DBG MIX` | `T`、`P/Q/R`、FR/FL/RR/RLの制御値 |
 | `#DShot150` / `#DShot300` / `#DShot600` / `#DShot1200` | `mode=bidir`、要求`duty`、送信`cmd`と論理`pkt`、eRPM、通信カウンタ |
 

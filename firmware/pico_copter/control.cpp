@@ -9,6 +9,7 @@
 #include "log_capture_gate.hpp"
 #include "motor_mix_scaling.hpp"
 #include "pico/sync.h"
+#include "pico/mutex.h"
 
 //Sensor data
 float Ax,Ay,Az,Wp,Wq,Wr,Mx,My,Mz,Mx0,My0,Mz0,Mx_ave,My_ave,Mz_ave;
@@ -64,6 +65,17 @@ uint32_t log_output_position=0;
 uint32_t log_output_count=0;
 uint64_t log_output_first_sample=0;
 bool log_output_started=false;
+
+// Only the USB diagnostic snapshot is synchronized here. No USB printing
+// or mutex acquisition is introduced in the 400 Hz rate controller.
+// Core 1 publishes a coherent estimator snapshot under this short mutex;
+// the USB thread on core 0 reads the copy, not the live Eigen state.
+namespace {
+mutex_t attitude_debug_mutex;
+AttitudeDebugSnapshot published_attitude{};
+uint32_t imu_debug_sample_count = 0;
+uint32_t imu_debug_sample_time_us = 0;
+}
 
 //State Machine
 volatile uint8_t LockMode=0;
@@ -450,6 +462,33 @@ uint8_t logdata_out_com(void)
   return 0;
 }
 
+// The IMU values are written on core 0 by the 400 Hz timer IRQ. Copy
+// all nine values with that IRQ briefly disabled, matching the existing
+// motor-control snapshot approach. Never take a blocking multicore lock
+// from inside the rate-control interrupt.
+ImuDebugSnapshot imu_debug_snapshot(void)
+{
+  ImuDebugSnapshot snapshot{};
+  const uint32_t saved = save_and_disable_interrupts();
+  snapshot.ax = Ax; snapshot.ay = Ay; snapshot.az = Az;
+  snapshot.wp = Wp; snapshot.wq = Wq; snapshot.wr = Wr;
+  snapshot.mx = Mx; snapshot.my = My; snapshot.mz = Mz;
+  snapshot.sample_time_us = imu_debug_sample_time_us;
+  snapshot.valid = imu_debug_sample_count != 0;
+  restore_interrupts(saved);
+  return snapshot;
+}
+
+AttitudeDebugSnapshot attitude_debug_snapshot(void)
+{
+  // Estimator runs on core 1; disabling core-0 IRQs does NOT freeze it.
+  // Use a dedicated, short mutex only for publishing/copying the snapshot.
+  mutex_enter_blocking(&attitude_debug_mutex);
+  const AttitudeDebugSnapshot result = published_attitude;
+  mutex_exit(&attitude_debug_mutex);
+  return result;
+}
+
 ControlDebugSnapshot control_debug_snapshot(void)
 {
   ControlDebugSnapshot snapshot{};
@@ -636,6 +675,29 @@ void angle_control(void)
 
     //Logging
     logging();
+
+    // Publish a consistent debug-only copy after the 100 Hz estimator
+    // update. USB formatting happens later on core 0's main thread.
+    // This does not change the EKF, attitude controller or CH5 capture.
+    AttitudeDebugSnapshot snapshot{};
+    snapshot.roll = Phi;
+    snapshot.pitch = Theta;
+    snapshot.yaw = Psi;
+    snapshot.roll_bias = Phi_bias;
+    snapshot.pitch_bias = Theta_bias;
+    snapshot.yaw_bias = Psi_bias;
+    snapshot.quaternion[0] = Xe(0,0);
+    snapshot.quaternion[1] = Xe(1,0);
+    snapshot.quaternion[2] = Xe(2,0);
+    snapshot.quaternion[3] = Xe(3,0);
+    snapshot.gyro_bias[0] = Xe(4,0);
+    snapshot.gyro_bias[1] = Xe(5,0);
+    snapshot.gyro_bias[2] = Xe(6,0);
+    snapshot.sample_time_us = S_time2;
+    snapshot.valid = true;
+    mutex_enter_blocking(&attitude_debug_mutex);
+    published_attitude = snapshot;
+    mutex_exit(&attitude_debug_mutex);
 
     E_time2=time_us_32();
     D_time2=E_time2-S_time2;
@@ -889,10 +951,20 @@ const float zoom[3]={0.003077277151877191, 0.0031893151610213463, 0.003383279497
   Mx/=mag_norm;
   My/=mag_norm;
   Mz/=mag_norm;
+
+  // Record the freshness of the most recent 400 Hz IMU update.
+  // All source values above are already flight-control inputs; no extra
+  // sensor transaction is performed for USB debugging.
+  imu_debug_sample_time_us = S_time;
+  ++imu_debug_sample_count;
 }
 
 void variable_init(void)
 {
+  mutex_init(&attitude_debug_mutex);
+  published_attitude = {};
+  imu_debug_sample_count = 0;
+  imu_debug_sample_time_us = 0;
   //Variable Initalize
   Xe << 1.00, 0.0, 0.0, 0.0,0.0,0.0, 0.0;
   Xp =Xe;

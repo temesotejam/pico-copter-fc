@@ -134,12 +134,14 @@ USB CDCに`#DBG STATE`（アーム状態）、`#DBG SBUS`（CH1〜6と受信鮮�
 
 | 変更したいこと | 修正箇所 |
 |---|---|
-| SBUS / ミキサ / DShot eRPMの表示項目や書式 | `debug_usb.cpp` |
+| SBUS・IMU・推定姿勢・EKF・PID・DShotの表示項目や書式 | `debug_usb.cpp` |
 | 通常の周期的USB診断をまとめてOFF | `debug_usb.hpp` の `kEnablePeriodicDiagnostics` |
+| IMU・地磁気・姿勢角・EKFの表示を個別にON/OFF | `debug_usb.hpp` の `kEnableImu`、`kEnableMag`、`kEnableAttitude`、`kEnableEkf` |
+| SBUS・PID／ミキサ・DShotの表示を個別にON/OFF | `debug_usb.hpp` の `kEnableSbus`、`kEnablePidMixer`、`kEnableDShot` |
 | RC状態変化メッセージをOFF | `debug_usb.hpp` の `kEnableRcStateMessages` |
 | 送受信・制御データの取得処理 | 各機能の `*_debug_snapshot()`（出力自体は担当しない） |
 
-ディスアーム時は約0.5秒ごと、アーム時は約1秒ごとの表示を維持します。**デバッグの`printf`は400 Hz割り込みやコア1の制御タスクには置いていません。** USB未接続時、およびCH5記録データ出力時は通常診断を表示しません。
+ディスアーム時は約0.5秒ごと、アーム時は約1秒ごとの表示を維持します。`#DBG IMU`はm/s²、`#DBG GYRO`はrad/s、`#DBG MAG`は正規化ベクトル、`#DBG ATT`は基準角差し引き後と差し引き前の姿勢角（°）、`#DBG EKF`はクォータニオンと内部バイアスを出力します。各行の`age_ms`で取得からの経過時間が分かります。**デバッグの`printf`は400 Hz割り込みやコア1の制御タスクには置いていません。** USB未接続時、およびCH5記録データ出力時は通常診断を表示しません。
 
 **例外：CH5の38項目リングログ・P/Q/R共分散・PIDゲインのエクスポートだけは `control.cpp` の`log_output()`に残しています。** これは実験用データであって通常のデバッグ表示ではなく、既存の行形式と書き出し手順を変えないためです。過去の呼び出されていない単発`output_data()`、`output_sensor_raw_data()`、`printData()`と無効なサンプルの`printf`は整理しました。
 

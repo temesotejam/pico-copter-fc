@@ -9,9 +9,19 @@
 // so its 100 Hz x 38 field data stream and timing are unchanged.
 namespace debug_usb {
 
-// These switches affect ONLY USB human-readable diagnostics, not CH5 data.
+// Edit this ONE file to choose which human-readable USB categories
+// appear. These switches never alter sensors, control, DShot, or CH5 logging.
+// printf() is still done on core 0's non-real-time main thread only.
 constexpr bool kEnablePeriodicDiagnostics = true;
 constexpr bool kEnableRcStateMessages = true;
+constexpr bool kEnableState = true;
+constexpr bool kEnableSbus = true;
+constexpr bool kEnableImu = true;        // Accelerometer and gyro
+constexpr bool kEnableMag = true;        // Calibrated, normalized magnetometer
+constexpr bool kEnableAttitude = true;   // Roll/pitch/yaw in degrees
+constexpr bool kEnableEkf = true;        // Quaternion + EKF gyro bias
+constexpr bool kEnablePidMixer = true;   // T/P/Q/R and FR/FL/RR/RL
+constexpr bool kEnableDShot = true;      // eRPM, commands and RX errors
 
 void startup_countdown(int seconds_remaining);
 void startup_complete();
