@@ -49,6 +49,7 @@ struct DShotMotorTelemetry {
     uint32_t rx_bad_gcr;
     uint32_t rx_bad_crc;
     uint32_t rx_other;
+    uint32_t rx_discarded; // Late/orphan telemetry words, not used in control.
     uint32_t tx_busy;
     bool fresh;
     // Diagnostics: value requested by the controller and the last packet

@@ -7,9 +7,9 @@
  * waiting for the ESC. Telemetry is USB diagnostics only, never feedback
  * for PID, EKF or the motor mixer.
  *
- * The PIO TX/RX instruction sequence and timing are kept identical to
- * the RP2040 direct-wired version that produced real eRPM on 2026-10-16.
- * Do not change PIO timing/pin direction without separate bench testing.
+ * PIO TX/RX timing is identical to the verified 2026-10-16 RP2040
+ * baseline. Missing, malformed or delayed ESC replies never affect motor
+ * commands. This is always BIDIRECTIONAL DShot (not a protocol fallback).
  *
  * TX/RX PIO program adapted from simonwunderlich/pio-dshot (MIT):
  * https://github.com/simonwunderlich/pio-dshot
@@ -47,7 +47,6 @@ PIO dshot_pio = pio0;
 uint sm_for_motor[MOTOR_COUNT]{};
 bool dshot_ready = false;
 float requested_duty[MOTOR_COUNT]{};
-bool exchange_in_flight = false;
 bool motor_sent[MOTOR_COUNT]{};
 
 struct MotorStats {
@@ -59,6 +58,7 @@ struct MotorStats {
     uint32_t rx_bad_gcr = 0;
     uint32_t rx_bad_crc = 0;
     uint32_t rx_other = 0;
+    uint32_t rx_discarded = 0; // Unpaired/excess responses drained from FIFO.
     uint32_t tx_busy = 0;
     uint16_t last_command = 0;
     uint16_t last_frame = 0;
@@ -93,42 +93,59 @@ void init_bidir_dshot() {
     dshot_ready = true;
 }
 
+// This runs once per 400 Hz tick, never blocking on a missing reply.
+// Drain every motor's RX FIFO, including channels whose previous TX was
+// skipped. Otherwise a late/unpaired response could remain indefinitely
+// and cause start_next_exchange() to skip ALL subsequent commands.
 void collect_previous_telemetry() {
-    if (!exchange_in_flight) return;
     const uint32_t now_us = time_us_32();
     for (uint i = 0; i < MOTOR_COUNT; ++i) {
-        if (!motor_sent[i]) continue;
-        motor_sent[i] = false;
         const uint sm = sm_for_motor[i];
         MotorStats& stat = telemetry[i];
-        if (pio_sm_is_rx_fifo_empty(dshot_pio, sm)) {
-            ++stat.rx_timeout;
-            continue;
+        const bool reply_expected = motor_sent[i];
+        motor_sent[i] = false;
+        bool response_collected = false;
+
+        // A PIO RX FIFO holds at most four words. Any additional response
+        // is stale; never allow it to block a future motor command.
+        for (uint j = 0; j < 4u && !pio_sm_is_rx_fifo_empty(dshot_pio, sm); ++j) {
+            const uint32_t response = pio_sm_get(dshot_pio, sm);
+            if (!reply_expected || response_collected) {
+                ++stat.rx_discarded;
+                continue;
+            }
+            response_collected = true;
+            const dshot::ErpmResult result = dshot::decode_erpm(response);
+            switch (result.result) {
+            case dshot::RxResult::Erpm:
+                stat.erpm = result.erpm;
+                stat.last_good_us = now_us;
+                ++stat.rx_ok;
+                break;
+            case dshot::RxResult::NoResponse: ++stat.rx_timeout; break;
+            case dshot::RxResult::BadGcr: ++stat.rx_bad_gcr; break;
+            case dshot::RxResult::BadChecksum: ++stat.rx_bad_crc; break;
+            case dshot::RxResult::OtherTelemetry: ++stat.rx_other; break;
+            }
         }
-        const uint32_t response = pio_sm_get(dshot_pio, sm);
-        const dshot::ErpmResult result = dshot::decode_erpm(response);
-        switch (result.result) {
-        case dshot::RxResult::Erpm:
-            stat.erpm = result.erpm;
-            stat.last_good_us = now_us;
-            ++stat.rx_ok;
-            break;
-        case dshot::RxResult::NoResponse: ++stat.rx_timeout; break;
-        case dshot::RxResult::BadGcr: ++stat.rx_bad_gcr; break;
-        case dshot::RxResult::BadChecksum: ++stat.rx_bad_crc; break;
-        case dshot::RxResult::OtherTelemetry: ++stat.rx_other; break;
-        }
+        if (reply_expected && !response_collected)
+            ++stat.rx_timeout; // ESC missing / not powered / no telemetry
     }
-    exchange_in_flight = false;
 }
 
 void start_next_exchange() {
     if (!dshot_ready) return;
     for (uint i = 0; i < MOTOR_COUNT; ++i) {
         const uint sm = sm_for_motor[i];
-        if (!pio_sm_is_tx_fifo_empty(dshot_pio, sm)
-            || !pio_sm_is_rx_fifo_empty(dshot_pio, sm)) {
-            // Never block the 400 Hz controller waiting for ESC telemetry.
+        // Ignore and drain any unpaired late RX data before queuing TX.
+        // DShot replies are optional and cannot hold up the output path.
+        for (uint j = 0; j < 4u && !pio_sm_is_rx_fifo_empty(dshot_pio, sm); ++j) {
+            (void)pio_sm_get(dshot_pio, sm);
+            ++telemetry[i].rx_discarded;
+        }
+        if (!pio_sm_is_tx_fifo_empty(dshot_pio, sm)) {
+            // A genuinely stalled TX state machine is recorded separately.
+            // Never block the ISR waiting for it.
             ++telemetry[i].tx_busy;
             continue;
         }
@@ -140,7 +157,6 @@ void start_next_exchange() {
         telemetry[i].last_frame = dshot::bidirectional_frame(throttle);
         motor_sent[i] = true;
     }
-    exchange_in_flight = true;
 }
 
 void pwm_wrap_irq_handler() {
@@ -167,6 +183,7 @@ DShotTelemetrySnapshot dshot_telemetry_snapshot(void) {
         dest.rx_bad_gcr = s.rx_bad_gcr;
         dest.rx_bad_crc = s.rx_bad_crc;
         dest.rx_other = s.rx_other;
+        dest.rx_discarded = s.rx_discarded;
         dest.tx_busy = s.tx_busy;
         dest.requested_duty = requested_duty[i];
         dest.last_command = s.last_command;

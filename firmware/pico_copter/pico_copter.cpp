@@ -118,7 +118,7 @@ int main(void)
               : 0u;
           printf("#DShot300 %s mode=bidir duty=%.3f cmd=%u pkt=0x%04x "
                  "eRPM=%ld valid=%u rx=%lu/%lu (%lu%%) "
-                 "timeout=%lu gcr=%lu crc=%lu other=%lu busy=%lu\n",
+                 "timeout=%lu gcr=%lu crc=%lu other=%lu stray=%lu busy=%lu\n",
                  names[i], static_cast<double>(m.requested_duty),
                  static_cast<unsigned int>(m.last_command),
                  static_cast<unsigned int>(m.last_frame),
@@ -131,6 +131,7 @@ int main(void)
                  static_cast<unsigned long>(m.rx_bad_gcr),
                  static_cast<unsigned long>(m.rx_bad_crc),
                  static_cast<unsigned long>(m.rx_other),
+                 static_cast<unsigned long>(m.rx_discarded),
                  static_cast<unsigned long>(m.tx_busy));
         }
       }
