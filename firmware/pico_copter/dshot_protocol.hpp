@@ -3,15 +3,12 @@
 
 #include <stdint.h>
 #include <cmath>
+#include "dshot_config.hpp"
 
 namespace dshot {
-constexpr uint32_t kBitRate = 300000;
-// Compatibility constants for the earlier ONE-WAY DShot300 PIO. The
-// confirmed-working bidirectional implementation uses 40 PIO cycles/bit
-// at 12 MHz; see PIO_CYCLES_PER_BIT in pwm.cpp. Do not use the following
-// one-way clock constants to configure bidirectional reception.
-constexpr uint32_t kPioCyclesPerBit = 8;
-constexpr uint32_t kPioClockHz = kBitRate * kPioCyclesPerBit;
+// Rate and bidirectional PIO timing are configured in dshot_config.hpp.
+// This file handles frame/CRC encoding only. The old one-way frame helpers
+// below are retained for unit tests/history; they are NOT used for motor TX.
 constexpr uint16_t kStop = 0;
 constexpr uint16_t kMinimumThrottle = 48;
 constexpr uint16_t kMaximumThrottle = 2047;

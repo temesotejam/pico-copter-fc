@@ -79,6 +79,32 @@ cmake --build build --parallel
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
+## DShot速度の設定（双方向のまま）
+
+[`dshot_config.hpp`](dshot_config.hpp) にある以下の**1行**が通常の変更箇所です。
+
+```cpp
+#ifndef DSHOT_RATE_KBPS
+#define DSHOT_RATE_KBPS 300
+#endif
+```
+
+`150`、`300`（実機検証済み）、`600`、`1200` のいずれかを設定し、Pico用UF2を再ビルドします。PIOの1ビット40サイクルを維持して、PIO動作クロックをそれぞれ6/12/24/48 MHzに切り替え、折り返し約25 µsと返信開始監視約43 µsを追従させます。受信待ち回数は、元のPIOの`set y, 7`命令を読み取り、**起動前にだけ**指定速度用の`set y, 3/7/15/31`へ差し替えます。300の場合は命令を変更しません。
+
+ビルド時に一時的な設定変更をする方法：
+
+```bash
+cmake -S . -B build-dshot600 \
+  -DPICO_SDK_PATH=/path/to/pico-sdk \
+  -DPICO_BOARD=pico \
+  -DDSHOT_RATE_KBPS=600
+cmake --build build-dshot600 --parallel
+```
+
+`-DDSHOT_RATE_KBPS`を指定した場合はファイル内の値より優先されます。別速度への切替時は、**専用のビルドフォルダを使用するかCMakeキャッシュを更新**してください。速度の設定を変更しても、制御側の400 Hz出力周期／100 Hz姿勢制御、DShot 0停止、回転指令48〜2047、PID/EKF、CH5記録、受信欠落時の非ブロッキング制御は変更されません。
+
+起動時の`#DShot CONFIG rate=600 kbps mode=bidir control=400Hz`と`#DShot600 RL mode=bidir ...`で適用した速度を確認できます。300以外のeRPM動作は**未検証**なので、最初はプロペラを外して波形・返信・受信率を測定してください。
+
 ## 現行ベースライン：初代Picoの双方向DShot300
 
 **2026-10-16、初代Pico（RP2040）とレベルシフタ未実装の別基板で、ESC・モータ1組によるeRPM取得を実機確認しました。** スロットル操作へのeRPMの追従も良好との報告です。4基同時・実飛行・Pico 2の双方向受信の動作保証はありません。
@@ -103,7 +129,7 @@ cmake --build build --parallel
 
 - `dshot_tx.pio`：40 PIOクロック/ビットの反転DShot300送信、約25 µsの折り返し待ち、GPIO方向切替、返信先頭を約43 µs待機、21ビットの返信サンプリング。**実機で成功したPIO命令列・待ち時間は維持**。
 - `dshot_protocol.hpp`：停止`0`・回転`48〜2047`、反転CRCと送信用の反転16ビット列。ここに残る`frame()`と`pio_word()`は**旧一方向版の互換・試験用**で、現在のモータ送信には使っていません。
-- `pwm.cpp`/`pwm.hpp`：PIO0を4モータ分使用、400 Hz割り込みで制御後に送信し、前回返信を**待機なし**で取り出します。GPIO6サーボPWM、PWMスライス7による400 Hzタイマーは維持。
+- `pwm.cpp`/`pwm.hpp`：PIO0を4モータ分使用、400 Hz割り込みで制御後に送信し、前回返信を**待機なし**で取り出します。速度の設定は `dshot_config.hpp` で変更します。GPIO6サーボPWM、PWMスライス7による400 Hzタイマーは維持。
 - `dshot_bidir_decode.hpp`：NRZI/GCR・CRC・eRPM復号。eRPMは**診断専用**でPID・EKF・モータ指令のフィードバックには使用していません。
 - `control.cpp`：スロットル停止判定は従来の`T_ref/BATTERY_VOLTAGE < Disable_duty`、停止時はDShot`0`を継続送信。走行時`duty=0.10〜0.95`を`48〜2047`に割り当てます。各軸ミキシング・ゲイン・SBUSフェイルセーフ・CH5リングログは維持。
 - `tests/test_dshot*.cpp`と`tests/test_motor_mix_scaling.cpp`：プロトコルのパケット・CRC、テレメトリ復号、スロットル指令の全域テスト。GitHub ActionsでPico／Pico 2をそれぞれビルドしますが、実機確認済みは初代Picoのみです。
@@ -128,9 +154,9 @@ USBが接続されていて、CH5ログ出力中でなければ、通常のメ�
 | `#DBG STATE` | arm、lock、フェイルセーフ、CH5状態 |
 | `#DBG SBUS` | CH1〜6、生フレーム受信数、受信鮮度、フェイルセーフ |
 | `#DBG MIX` | `T`、`P/Q/R`、FR/FL/RR/RLの制御値 |
-| `#DShot300` | `mode=bidir`、要求`duty`、送信`cmd`と論理`pkt`、eRPM、通信カウンタ |
+| `#DShot150` / `#DShot300` / `#DShot600` / `#DShot1200` | `mode=bidir`、要求`duty`、送信`cmd`と論理`pkt`、eRPM、通信カウンタ |
 
-`#DShot300 RL mode=bidir duty=... cmd=... pkt=... eRPM=... valid=... rx=... timeout=... gcr=... crc=... other=... busy=...`
+`#DShot300 RL mode=bidir duty=... cmd=... pkt=... eRPM=... valid=... rx=... timeout=... gcr=... crc=... other=... stray=... busy=...`（標準設定の例。速度変更時は接頭辞が変わります）
 
 `cmd`/`pkt`はPIOへ投入された最新の指令であり、ESCが受信した証明ではありません。`valid=1`は**直近250 ms以内に成功したeRPM**があること、`eRPM=-1 valid=0`は受信値が未取得または古いことを表します。`rx`/`timeout`/`gcr`/`crc`/`other`/`stray`/`busy`は起動後の累積カウンタです。ESC未接続の3チャンネルで`timeout`が増えても、それは異常ではありません。
 

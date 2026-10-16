@@ -23,6 +23,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 pico_sdk_init()
 
+# Optional build override: -DDSHOT_RATE_KBPS=600
+# Empty (default) uses one editable value in dshot_config.hpp: 300.
+set(DSHOT_RATE_KBPS "" CACHE STRING "Override DShot speed in kbps (150, 300, 600, 1200); empty = dshot_config.hpp")
+if(NOT DSHOT_RATE_KBPS STREQUAL "" AND
+   NOT DSHOT_RATE_KBPS MATCHES "^(150|300|600|1200)$")
+    message(FATAL_ERROR "DSHOT_RATE_KBPS must be empty, 150, 300, 600, or 1200")
+endif()
+
 # Eigen can be supplied locally for offline/reproducible builds. If omitted,
 # this standalone firmware folder fetches the same fixed Eigen revision used by CI.
 set(EIGEN3_INCLUDE_DIR "" CACHE PATH "Directory containing Eigen/Dense")
@@ -57,6 +65,10 @@ add_executable(pico_copter
     radio.cpp
     control.cpp
 )
+
+if(NOT DSHOT_RATE_KBPS STREQUAL "")
+    target_compile_definitions(pico_copter PRIVATE DSHOT_RATE_KBPS=${DSHOT_RATE_KBPS})
+endif()
 
 target_include_directories(pico_copter PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

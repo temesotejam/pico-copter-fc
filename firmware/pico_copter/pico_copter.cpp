@@ -1,6 +1,7 @@
 // comment
 #include "pico_copter.hpp"
 #include "pico/stdio_usb.h"
+#include "dshot_config.hpp"
 
 //グローバル変数
 volatile uint8_t Arm_flag=0;
@@ -43,7 +44,9 @@ int main(void)
     sleep_ms(1000);
   }
   printf("\n");
- 
+  printf("#DShot CONFIG rate=%lu kbps mode=bidir control=400Hz\n",
+         static_cast<unsigned long>(dshot::kRateKbps));
+
   //マルチコア関連の設定
   sem_init(&sem, 0, 1);
   multicore_launch_core1(angle_control);  
@@ -116,9 +119,10 @@ int main(void)
           const uint32_t success_percent = m.tx
               ? static_cast<uint32_t>((static_cast<uint64_t>(m.rx_ok) * 100u) / m.tx)
               : 0u;
-          printf("#DShot300 %s mode=bidir duty=%.3f cmd=%u pkt=0x%04x "
+          printf("#DShot%lu %s mode=bidir duty=%.3f cmd=%u pkt=0x%04x "
                  "eRPM=%ld valid=%u rx=%lu/%lu (%lu%%) "
                  "timeout=%lu gcr=%lu crc=%lu other=%lu stray=%lu busy=%lu\n",
+                 static_cast<unsigned long>(dshot::kRateKbps),
                  names[i], static_cast<double>(m.requested_duty),
                  static_cast<unsigned int>(m.last_command),
                  static_cast<unsigned int>(m.last_frame),

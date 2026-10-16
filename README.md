@@ -64,13 +64,36 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
+## DShot通信速度の切り替え（150 / 300 / 600 / 1200）
+
+**速度設定は1か所だけです。** [`firmware/pico_copter/dshot_config.hpp`](firmware/pico_copter/dshot_config.hpp) の次の行を書き換え、再ビルドしてください。
+
+```cpp
+#ifndef DSHOT_RATE_KBPS
+#define DSHOT_RATE_KBPS 300  // ここを150 / 300 / 600 / 1200に変更
+#endif
+```
+
+| 設定 | 送信ビット速度 | 16ビットの送信時間 | PIOクロック |
+|---|---:|---:|---:|
+| `150` | 150 kbit/s | 約106.7 µs | 6 MHz |
+| `300` | 300 kbit/s | 約53.3 µs | 12 MHz |
+| `600` | 600 kbit/s | 約26.7 µs | 24 MHz |
+| `1200` | 1200 kbit/s | 約13.3 µs | 48 MHz |
+
+この設定に連動して、PIOクロック分周比、約25 µsの送受信折り返し待ち、ESC返信開始を検出する約43 µsの待ち時間、USBシリアルの`#DShot150`/`#DShot300`等の表示が変わります。`dshot_tx.pio`の実機動作確認済み命令列は維持し、返信待ちの`SET Y`命令のみ（PIO起動前に）ビット速度に応じて調整します。
+
+**どの速度でも双方向DShotです。** 400 Hzの制御・モータ指令更新周期、100 Hz姿勢制御、PID/EKF、スロットル範囲、フェイルセーフは変わりません。従来のeRPM取得実績があるのは**初代PicoのDShot300のみ**で、150/600/1200の実機通信・受信成功率は未確認です。ESCの対応速度を確認し、プロペラなしで波形・スロットル・eRPMを試してください。
+
+独立したビルドフォルダで速度を試す場合はソースを変更せず、`cmake -S firmware/pico_copter -B build-600 -DPICO_SDK_PATH=... -DPICO_BOARD=pico -DDSHOT_RATE_KBPS=600` でも指定できます。CMakeの指定値はヘッダ設定より優先します。通常のGitHub Actions/Pages公開ビルドはヘッダの値を使用し、配布ページの説明にもその速度を表示します。
+
 ## RP2040で動作確認した双方向DShot300（保存版）
 
 **2026-10-16に初代Raspberry Pi Pico（RP2040）、レベルシフタを実装しない別基板、ESC＋モータ1組で、DShot300指令・eRPM返信の取得に成功しました。** スロットル操作に対するeRPM変化も良好との報告を受けています。4基同時のeRPM、飛行安定性、Pico 2での双方向受信は未検証です。
 
 - **動作確認済みの元版（変更前）:** [保存ブランチ](https://github.com/temesotejam/pico-copter-fc/tree/archive/pico-rp2040-bidir-dshot300-erpm-working-20261016)（コミット`8c8dc12`）
 - **再現に必要な情報:** [DShot300ベースライン記録](firmware/pico_copter/DSHOT300_BASELINE.md)
-- **現在の実装:** 双方向DShot300（反転波形・反転CRC）、GPIOを送信後に入力へ切替、ESC返信をPIOで受信
+- **現在の実装:** 通信速度を変更できる双方向DShot（標準300、反転波形・反転CRC）、GPIOを送信後に入力へ切替、ESC返信をPIOで受信
 - **以前の一方向版:** コミット`2ed49dc`（比較用。現在のmainは双方向です）
 - **Pico用UF2:** [pico_copter.uf2](https://temesotejam.github.io/pico-copter-fc/firmware/pico_copter.uf2)（`main`更新時に再ビルドされる最新版。固定版のダウンロード先ではありません）
 
@@ -101,7 +124,7 @@ PIO0の4ステートマシンがモータ信号を扱い、PWMスライス7は�
 
 制御側の走行時の`duty=0.10〜0.95`をDShotの`48〜2047`へ対応させ、停止は常に`0`です。既存の停止境界（CH3約587）は変更していません。DShot指令は回転数を直接指定するRPM制御ではありません。
 
-USB CDCに`#DBG STATE`（アーム状態）、`#DBG SBUS`（CH1〜6と受信鮮度）、`#DBG MIX`（推力と各軸補正）、`#DShot300`（各モータの指令値・eRPM・受信状況）を出力します。eRPM返信の検証では`RL mode=bidir`、`valid`、`eRPM`、`rx`、`timeout`、`gcr`、`crc`、`stray`を確認してください。詳しい項目は[ファームウェアREADME](firmware/pico_copter/README.md)にあります。
+USB CDCに`#DBG STATE`（アーム状態）、`#DBG SBUS`（CH1〜6と受信鮮度）、`#DBG MIX`（推力と各軸補正）、`#DShot<速度>`（各モータの指令値・eRPM・受信状況）を出力します。eRPM返信の検証では`RL mode=bidir`、`valid`、`eRPM`、`rx`、`timeout`、`gcr`、`crc`、`stray`を確認してください。詳しい項目は[ファームウェアREADME](firmware/pico_copter/README.md)にあります。
 
 **安全上の条件:** レベルシフタや別の出力ドライバが同じESC信号線を駆動しない配線で使用してください。PicoのGPIOは5 V耐性ではないため、ESC側の信号線が3.3 V系であることを確認します。プロペラを外し、まずモータ1組で検証してください。
 

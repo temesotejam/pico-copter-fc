@@ -73,5 +73,6 @@ int main() {
     // Type=2 (extended temperature report); must never overwrite motor eRPM.
     auto other = decode_erpm(telemetry_word(0x200u));
     assert(other.result == RxResult::OtherTelemetry);
-    std::puts("Bidirectional DShot300 CRC, NRZI/GCR and eRPM tests passed");
+    std::printf("Bidirectional DShot%u CRC, NRZI/GCR and eRPM tests passed\n",
+                static_cast<unsigned int>(dshot::kRateKbps));
 }

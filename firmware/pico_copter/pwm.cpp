@@ -1,9 +1,9 @@
 /*
- * Bidirectional DShot300 / eRPM on Raspberry Pi Pico (RP2040).
+ * Configurable bidirectional DShot / eRPM on Raspberry Pi Pico (RP2040).
  * Direct connection to ESC signal, without a one-way level shifter.
  *
  * The 400 Hz IRQ computes motor commands, then queues bidirectional
- * DShot300 frames. The previous cycle's eRPM replies are read WITHOUT
+ * frames. The previous cycle's eRPM replies are read WITHOUT
  * waiting for the ESC. Telemetry is USB diagnostics only, never feedback
  * for PID, EKF or the motor mixer.
  *
@@ -19,6 +19,7 @@
 #include "dshot_bidir_decode.hpp"
 #include "dshot_tx.pio.h"
 #include "hardware/pio.h"
+#include "hardware/pio_instructions.h"
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
 
@@ -35,12 +36,14 @@ constexpr uint MOTOR_COUNT = 4;
 constexpr uint MOTOR_PINS[MOTOR_COUNT] = {
     PWM_PIN_FR, PWM_PIN_FL, PWM_PIN_RR, PWM_PIN_RL
 };
-// Bidirectional PIO is 40 cycles/bit (NOT the older one-way PIO's 8).
-constexpr uint32_t PIO_CYCLES_PER_BIT = 40;
-constexpr uint32_t RX_TURNAROUND_CYCLES = 25u * dshot::kBitRate
-                                              * PIO_CYCLES_PER_BIT / 1000000u;
+// One speed setting controls TX, reply sampling, and turnaround delay.
+// At default DShot300: 12 MHz PIO, 40 cycles/bit, 300 delay cycles.
+constexpr uint32_t PIO_CYCLES_PER_BIT = dshot::kPioCyclesPerBit;
+constexpr uint32_t RX_TURNAROUND_CYCLES = dshot::kTurnaroundCycles;
 constexpr uint32_t ERPM_STALE_US = 250000; // Telemetry display only.
-static_assert(RX_TURNAROUND_CYCLES == 300, "Wrong DShot300 turnaround");
+static_assert(RX_TURNAROUND_CYCLES ==
+              dshot::kTurnaroundUs * dshot::kPioClockHz / 1000000u,
+              "Wrong configurable DShot turnaround");
 static_assert(400 * 2500 == 1000000, "400 Hz scheduling invariant");
 
 PIO dshot_pio = pio0;
@@ -67,8 +70,29 @@ MotorStats telemetry[MOTOR_COUNT]{};
 
 void init_bidir_dshot() {
     const uint offset = pio_add_program(dshot_pio, &dshot_tx_program);
+
+    // Keep the verified PIO source byte-for-byte unchanged. It uses
+    // "set y, 7" for its 300 kbit/s RX-start search. For other rates,
+    // patch ONLY that unique SET instruction before enabling PIO, so
+    // the physical timeout remains about 43 us at 150/300/600/1200.
+    const uint16_t baseline_set_y = pio_encode_set(pio_y, 7);
+    uint wait_instruction_matches = 0;
+    for (uint j = 0; j < dshot_tx_program.length; ++j) {
+        if (dshot_tx_program.instructions[j] == baseline_set_y) {
+            ++wait_instruction_matches;
+            if (dshot::kRxWaitOuterY != 7u) {
+                dshot_pio->instr_mem[offset + j] =
+                    pio_encode_set(pio_y, dshot::kRxWaitOuterY);
+            }
+        }
+    }
+    if (wait_instruction_matches != 1u)
+        panic("DShot RX wait instruction not found or ambiguous");
     const float divisor = static_cast<float>(clock_get_hz(clk_sys)) /
-                          static_cast<float>(dshot::kBitRate * PIO_CYCLES_PER_BIT);
+                          static_cast<float>(dshot::kPioClockHz);
+    // RP2040 CLKDIV must be >= 1.0 for the selected speed.
+    if (divisor < 1.0f || divisor >= 65536.0f)
+        panic("DShot speed unsupported by RP2040 system clock");
     for (uint i = 0; i < MOTOR_COUNT; ++i) {
         const uint sm = pio_claim_unused_sm(dshot_pio, true);
         const uint pin = MOTOR_PINS[i];
@@ -237,7 +261,8 @@ void pwm_init() {
 }
 
 // Existing interface. These update 4 desired throttle commands only; actual
-// DShot TX/RX happens together after MAINLOOP() every 2.5 ms.
+// DShot TX/RX happens together after MAINLOOP() every 2.5 ms. The DShot
+// bit rate is independent of the 400 Hz motor update/control frequency.
 void set_duty_fr(float duty) { requested_duty[0] = duty; }
 void set_duty_fl(float duty) { requested_duty[1] = duty; }
 void set_duty_rr(float duty) { requested_duty[2] = duty; }

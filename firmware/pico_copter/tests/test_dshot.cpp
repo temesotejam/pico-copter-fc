@@ -6,8 +6,21 @@
 
 int main() {
     using namespace dshot;
-    static_assert(kPioClockHz == 2400000, "DShot300 PIO clock");
-    static_assert(kPioCyclesPerBit == 8, "Correct 1/0 duty widths");
+    static_assert(kPioClockHz == kBitRate * 40u, "Bidir PIO clock scales with bitrate");
+    static_assert(kPioCyclesPerBit == 40u, "40 PIO cycles per DShot bit");
+    static_assert(kTurnaroundCycles == kRateKbps, "25us turnaround in PIO cycles");
+    static_assert(kRxWaitOuterY == (8u * kRateKbps / 300u) - 1u,
+                  "RX wait counter scales with DShot rate");
+    static_assert((kRateKbps != 300u || kRxWaitOuterY == 7u) &&
+                  (kRateKbps != 600u || kRxWaitOuterY == 15u) &&
+                  (kRateKbps != 150u || kRxWaitOuterY == 3u) &&
+                  (kRateKbps != 1200u || kRxWaitOuterY == 31u),
+                  "Unexpected RX wait timing");
+    static_assert(kPioClockHz / kBitRate == 40u,
+                  "PIO TX/RX clock must follow bitrate");
+    static_assert(kRateKbps == 150u || kRateKbps == 300u ||
+                  kRateKbps == 600u || kRateKbps == 1200u,
+                  "Only supported DShot speeds");
     assert(frame(0) == 0);
     assert(frame(48) == 0x0606);
     assert(frame(2047) == 0xFFEE);
@@ -52,5 +65,6 @@ int main() {
     }
     assert(pio_word(kStop) == 0);
     assert(pio_word(48) == 0x06060000u);
-    std::puts("DShot300 encoding, CRC, stop and throttle mapping passed");
+    std::printf("DShot%u encoding/CRC, stop, throttle and PIO rate passed\n",
+                static_cast<unsigned int>(kRateKbps));
 }
