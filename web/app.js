@@ -11,6 +11,9 @@ const elements = {
   eigen: document.querySelector("#eigen"),
   builtAt: document.querySelector("#built-at"),
   download: document.querySelector("#download"),
+  sourceDownload: document.querySelector("#source-download"),
+  sourceSize: document.querySelector("#source-size"),
+  sourceSha256: document.querySelector("#source-sha256"),
 };
 
 function formatBytes(bytes) {
@@ -26,6 +29,11 @@ async function loadManifest() {
   elements.download.classList.add("disabled");
   elements.download.setAttribute("aria-disabled", "true");
   elements.download.removeAttribute("href");
+  elements.sourceDownload.classList.add("disabled");
+  elements.sourceDownload.setAttribute("aria-disabled", "true");
+  elements.sourceDownload.removeAttribute("href");
+  elements.sourceSize.textContent = "—";
+  elements.sourceSha256.textContent = "—";
   elements.status.textContent = "ビルド情報を取得しています…";
   elements.status.className = "";
   try {
@@ -52,6 +60,17 @@ async function loadManifest() {
     elements.download.download = manifest.downloadName;
     elements.download.classList.remove("disabled");
     elements.download.removeAttribute("aria-disabled");
+    if (manifest.sourcePackageFile && manifest.sourcePackageSha256 &&
+        Number.isFinite(manifest.sourcePackageSize)) {
+      elements.sourceSize.textContent = formatBytes(manifest.sourcePackageSize);
+      elements.sourceSha256.textContent = manifest.sourcePackageSha256;
+      elements.sourceDownload.href =
+        `./firmware/${manifest.sourcePackageFile}?commit=${manifest.sourceCommit}`;
+      elements.sourceDownload.download =
+        manifest.sourcePackageDownloadName ?? "pico_copter_source.zip";
+      elements.sourceDownload.classList.remove("disabled");
+      elements.sourceDownload.removeAttribute("aria-disabled");
+    }
   } catch (error) {
     if (requestId !== latestRequestId) return;
     elements.status.textContent = "まだ公開されたUF2がありません";

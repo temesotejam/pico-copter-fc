@@ -39,11 +39,15 @@ if(NOT DSHOT_BIDIRECTIONAL STREQUAL "" AND
     message(FATAL_ERROR "DSHOT_BIDIRECTIONAL must be empty, 0, or 1")
 endif()
 
-# Eigen can be supplied locally for offline/reproducible builds. If omitted,
-# this standalone firmware folder fetches the same fixed Eigen revision used by CI.
+# Portable source ZIP bundles Eigen headers in third_party/eigen.
+# Prefer this local copy, then a caller-provided EIGEN3_INCLUDE_DIR, then
+# the pinned upstream download. Neither a Git checkout nor a ../../eigen
+# folder is needed when building the extracted ZIP elsewhere.
 set(EIGEN3_INCLUDE_DIR "" CACHE PATH "Directory containing Eigen/Dense")
-
-include_directories(../../eigen)
+if(NOT EIGEN3_INCLUDE_DIR AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen/Eigen/Dense")
+    set(EIGEN3_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen")
+endif()
 
 if(NOT EIGEN3_INCLUDE_DIR)
     include(FetchContent)

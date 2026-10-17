@@ -13,6 +13,14 @@
 
 Eigenの場所を指定しない場合、CMakeが公式Eigenの固定コミットを自動取得します。
 
+## 別環境への持ち出し用ソースZIP
+
+[配布ページ](https://temesotejam.github.io/pico-copter-fc/)から`pico_copter_source.zip`を取得すると、このフォルダの**実行に必要なソース・CMakeLists.txt・PIO・ライセンス・ビルド手順**と、**Eigen 3.4.0のヘッダ**を入手できます。リポジトリの`web/`、`.github/`、旧テストファイルやGit履歴は含めません。
+
+展開後の`pico_copter`がCMakeのトップディレクトリです。同梱の`third_party/eigen/Eigen`をCMakeが自動認識します。**Pico SDK 2.3.0、ARM GCC、CMake（Ninja推奨）**は別途インストールが必要です。詳細はZIP内の`PORTABLE_BUILD.md`を参照してください。
+
+何度もゲイン調整するときは、初回のビルド後に`build`フォルダを消さず、変更後に`cmake --build build --parallel`だけを実行してください。EigenやPico SDKを毎回取得・構築し直す必要はありません。
+
 ## ビルド例
 
 ```bash

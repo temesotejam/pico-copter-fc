@@ -37,6 +37,19 @@
       <a id="download" class="button disabled" aria-disabled="true">UF2をダウンロード</a>
     </section>
 
+    <section class="card" id="source-package">
+      <h2>飛行制御ソース一式（ZIP）</h2>
+      <p>Gitリポジトリ全体ではなく、<strong>飛行制御プログラム、各種ヘッダ、PIO、CMake設定、Eigen 3.4.0のヘッダとライセンス、ビルド手順</strong>だけをまとめたZIPです。研究室や手元のPCへ展開して、そのまま編集・ビルドできます。</p>
+      <dl class="metadata">
+        <div><dt>サイズ</dt><dd id="source-size">—</dd></div>
+        <div><dt>SHA-256</dt><dd id="source-sha256">—</dd></div>
+        <div><dt>更新元</dt><dd>上のUF2と同じソースコミット</dd></div>
+      </dl>
+      <a id="source-download" class="button disabled" aria-disabled="true">飛行制御ソース ZIPをダウンロード</a>
+      <p class="muted"><strong>別途必要なもの：</strong>Raspberry Pi Pico SDK 2.3.0、ARM GCC、CMake（Ninja推奨）。EigenはZIPに含まれるため、追加ダウンロード不要です。</p>
+      <p>展開した <code>pico_copter</code> フォルダ内で <code>PORTABLE_BUILD.md</code> の手順に従ってください。ゲイン調整を繰り返す際は、同じ <code>build</code> フォルダで増分ビルドできるので、毎回全体をコンパイルする必要はありません。</p>
+    </section>
+
     <section class="card">
       <h2>書き込み</h2>
       <ol>

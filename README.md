@@ -195,6 +195,23 @@ firmware/pico_copter/
 
 GitHub Actions、キャッシュ、Web配布画面などは、ファームウェアフォルダの外側に分離しています。
 
+## 飛行制御ソースZIP（ローカル開発用）
+
+[UF2配布ページ](https://temesotejam.github.io/pico-copter-fc/) に「**飛行制御ソース一式（ZIP）**」のダウンロードを追加しています。Gitリポジトリ全体のZIPとは異なり、`firmware/pico_copter` にある**実際の飛行制御コード・ヘッダ・PIO・CMake設定・DShotライセンス**に加え、**ビルドで使用しているEigen 3.4.0のヘッダとライセンス**、`PORTABLE_BUILD.md` をまとめます。Webアプリ、GitHub Actions、履歴資料、過去のビルド生成物は含みません。
+
+ZIPには、ビルド用ツールチェーン（**Pico SDK 2.3.0、ARM GCC、CMake、任意でNinja**）は含まれません。これらを既にインストールしたPCなら、ZIPを展開した`pico_copter`フォルダを別の場所へ移してビルドできます。**Eigenを改めてネットから取得する必要はありません。**
+
+```bash
+cd pico_copter
+cmake -S . -B build -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+# → build/pico_copter.uf2
+```
+
+次回以降、PIDゲインやDShot設定を変更した際は、`build`フォルダを削除せず、**`cmake --build build --parallel`のみ**を実行すれば増分ビルドできます。Pico 2用は別のビルドフォルダと`-DPICO_BOARD=pico2`を指定します。
+
+GitHub ActionsはZIPを生成した後、**リポジトリ外の一時ディレクトリへZIPを展開し、同梱のEigenを利用してPico用UF2を再ビルド**します。ZIPのダウンロードファイル、サイズ、SHA-256はサイト上に表示され、配布UF2と同じソースコミットに基づきます。
+
 ## github.devでファームウェアを編集する
 
 通常のGitHubで編集したいファイルを開き、キーボードの`.`キーを押すと、同じリポジトリを`github.dev`で開けます。

@@ -254,6 +254,119 @@ jobs:
             2>&1 | tee build-opposite.log
           test -s build-opposite/pico_copter.uf2
 
+      - name: Create and independently build portable flight source ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          import zipfile
+
+          source = Path("firmware/pico_copter")
+          stage = Path("portable-export/pico_copter")
+          shutil.rmtree(stage.parent, ignore_errors=True)
+          stage.mkdir(parents=True)
+
+          # Root project source, all required headers, PIO and build config.
+          # Exclude repository web/Actions, historical files, host tests and
+          # all firmware build outputs. No Git repository is needed to build.
+          permitted = {".cpp", ".hpp", ".c", ".h", ".pio"}
+          fixed = {"CMakeLists.txt", "README.md", "DSHOT_UPSTREAM_LICENSE.txt"}
+          copied = []
+          for item in sorted(source.iterdir()):
+              if item.is_file() and (item.suffix in permitted or item.name in fixed):
+                  shutil.copy2(item, stage / item.name)
+                  copied.append(item.name)
+          for required in ("CMakeLists.txt", "pico_copter.cpp", "pwm.cpp",
+                           "dshot_config.hpp", "dshot_oneway.pio", "dshot_tx.pio",
+                           "DSHOT_UPSTREAM_LICENSE.txt"):
+              assert required in copied, f"Missing portable flight source: {required}"
+
+          # Eigen is header-only. Bundle the SAME pinned, CI-verified headers
+          # used to build the released UF2 so editing gains needs no download.
+          eigen_source = Path("third_party/eigen")
+          eigen_target = stage / "third_party/eigen"
+          eigen_target.mkdir(parents=True)
+          shutil.copytree(eigen_source / "Eigen", eigen_target / "Eigen")
+          if (eigen_source / "unsupported").is_dir():
+              shutil.copytree(eigen_source / "unsupported", eigen_target / "unsupported")
+          for item in sorted(eigen_source.glob("COPYING*")):
+              if item.is_file():
+                  shutil.copy2(item, eigen_target / item.name)
+          assert (eigen_target / "Eigen/Dense").is_file()
+
+          (stage / "PORTABLE_BUILD.md").write_text("""# Pico Copter — portable flight-control source
+
+          Extract this ZIP anywhere. The 'pico_copter' directory is a complete
+          standalone firmware CMake project (without web/Actions or Git files).
+          Eigen 3.4.0 headers are bundled, so Eigen will NOT be downloaded.
+
+          External tools still required on your computer:
+          - Raspberry Pi Pico SDK 2.3.0 (including SDK submodules)
+          - ARM GCC bare-metal toolchain, CMake, and preferably Ninja
+          - Internet only if your Pico SDK/toolchain installation needs it
+
+          Build in a TERMINAL from inside the extracted pico_copter directory:
+
+          cmake -S . -B build -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+          UF2 output: build/pico_copter.uf2
+
+          For Pico 2: use -DPICO_BOARD=pico2 and a separate build directory.
+          For faster repeated gain changes: keep the 'build' directory,
+          rerun only 'cmake --build build --parallel'; do not delete build.
+          Edit PID gains in control.cpp, DShot rate/mode in dshot_config.hpp,
+          and diagnostic enable flags in debug_usb.hpp.
+          Safety: test without propellers before flight.
+
+          Note: the ZIP is source only; it contains no generated build output.
+          The Pico SDK and ARM compiler are toolchain dependencies, not part
+          of the portable project.
+          """.replace("          ", ""), encoding="utf-8")
+
+          archive = stage.parent / "pico_copter_source.zip"
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED,
+                               compresslevel=6) as zf:
+              for item in sorted(stage.rglob("*")):
+                  if item.is_file():
+                      zf.write(item, arcname=item.relative_to(stage.parent))
+          with zipfile.ZipFile(archive) as zf:
+              assert zf.testzip() is None
+              names = zf.namelist()
+              assert any(x.endswith("/Eigen/Dense") for x in names)
+              assert not any("/tests/" in x or "/.github/" in x or "/web/" in x for x in names)
+          print(f"Portable source ZIP: {archive}, {archive.stat().st_size} bytes, "
+                f"{len(copied)} firmware files")
+          PY
+
+          # Smoke-test the extracted ZIP in an OUTSIDE directory, with no
+          # access to repo-relative sources or to GitLab for Eigen.
+          mkdir -p "${RUNNER_TEMP}/pico-source-extraction"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import zipfile
+
+          with zipfile.ZipFile("portable-export/pico_copter_source.zip") as zf:
+              zf.extractall(Path(os.environ["RUNNER_TEMP"]) / "pico-source-extraction")
+          PY
+          cmake \
+            -S "${RUNNER_TEMP}/pico-source-extraction/pico_copter" \
+            -B "${RUNNER_TEMP}/pico-source-build" -G Ninja \
+            -DPICO_SDK_PATH="${PICO_SDK_PATH}" \
+            -DPICO_BOARD=pico \
+            -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            2>&1 | tee configure-portable.log
+          cmake --build "${RUNNER_TEMP}/pico-source-build" \
+            --target pico_copter --parallel "$(nproc)" \
+            2>&1 | tee build-portable.log
+          test -s "${RUNNER_TEMP}/pico-source-build/pico_copter.uf2"
+
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -266,6 +379,8 @@ jobs:
             build-pico2.log
             configure-opposite.log
             build-opposite.log
+            configure-portable.log
+            build-portable.log
           if-no-files-found: warn
           retention-days: 1
 
@@ -277,6 +392,9 @@ jobs:
           rm -rf output site
           mkdir -p output site/firmware
           cp -a web/. site/
+          test -s portable-export/pico_copter_source.zip
+          cp portable-export/pico_copter_source.zip output/pico_copter_source.zip
+          cp portable-export/pico_copter_source.zip site/firmware/pico_copter_source.zip
 
           for DEST in output site/firmware; do
             cp build/pico_copter.uf2 "${DEST}/pico_copter.uf2"
@@ -292,6 +410,9 @@ jobs:
             cp configure.log build.log configure-pico2.log build-pico2.log "${DEST}/"
           done
 
+          export SOURCE_ZIP_SHA256 SOURCE_ZIP_SIZE
+          SOURCE_ZIP_SHA256="$(sha256sum portable-export/pico_copter_source.zip | cut -d ' ' -f 1)"
+          SOURCE_ZIP_SIZE="$(stat -c '%s' portable-export/pico_copter_source.zip)"
           export UF2_SHA256 UF2_SIZE UF2_PICO2_SHA256 UF2_PICO2_SIZE BUILT_AT
           UF2_SHA256="$(sha256sum build/pico_copter.uf2 | cut -d ' ' -f 1)"
           UF2_SIZE="$(stat -c '%s' build/pico_copter.uf2)"
@@ -333,6 +454,11 @@ jobs:
               "sha256": os.environ["UF2_SHA256"],
               "sourceCommit": os.environ["GITHUB_SHA"],
               "sourcePath": "firmware/pico_copter",
+              "sourcePackageFile": "pico_copter_source.zip",
+              "sourcePackageDownloadName": "pico_copter_source.zip",
+              "sourcePackageSize": int(os.environ["SOURCE_ZIP_SIZE"]),
+              "sourcePackageSha256": os.environ["SOURCE_ZIP_SHA256"],
+              "sourcePackageIncludesEigen": True,
               "picoSdkRef": os.environ["PICO_SDK_REF"],
               "eigenVersion": os.environ["EIGEN_VERSION"],
               "eigenRef": os.environ["EIGEN_REF"],
