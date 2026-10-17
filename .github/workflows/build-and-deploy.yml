@@ -161,16 +161,21 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I firmware/pico_copter \
             firmware/pico_copter/tests/test_motor_mix_scaling.cpp -o /tmp/motor-mix-test
           /tmp/motor-mix-test
-          # Exercise DShot frame/CRC and telemetry decoding at every rate.
+          # Check standard/inverted CRC and telemetry decoder for both
+          # manually selected modes at all supported link rates.
           for rate in 150 300 600 1200; do
-            g++ -std=c++17 -Wall -Wextra -Werror \
-              -DDSHOT_RATE_KBPS="$rate" -I firmware/pico_copter \
-              firmware/pico_copter/tests/test_dshot.cpp -o /tmp/dshot-speed-test
-            /tmp/dshot-speed-test
-            g++ -std=c++17 -Wall -Wextra -Werror \
-              -DDSHOT_RATE_KBPS="$rate" -I firmware/pico_copter \
-              firmware/pico_copter/tests/test_dshot_bidir.cpp -o /tmp/dshot-bidir-speed-test
-            /tmp/dshot-bidir-speed-test
+            for mode in 0 1; do
+              g++ -std=c++17 -Wall -Wextra -Werror \
+                -DDSHOT_RATE_KBPS="$rate" -DDSHOT_BIDIRECTIONAL="$mode" \
+                -I firmware/pico_copter \
+                firmware/pico_copter/tests/test_dshot.cpp -o /tmp/dshot-speed-test
+              /tmp/dshot-speed-test
+              g++ -std=c++17 -Wall -Wextra -Werror \
+                -DDSHOT_RATE_KBPS="$rate" -DDSHOT_BIDIRECTIONAL="$mode" \
+                -I firmware/pico_copter \
+                firmware/pico_copter/tests/test_dshot_bidir.cpp -o /tmp/dshot-bidir-speed-test
+              /tmp/dshot-bidir-speed-test
+            done
           done
 
       - name: Configure Pico Copter
@@ -230,6 +235,25 @@ jobs:
             test -s build-pico2/pico_copter.uf2
           } 2>&1 | tee build-pico2.log
 
+      - name: Verify opposite DShot mode compiles for Pico
+        shell: bash
+        run: |
+          set -euxo pipefail
+          selected_mode="$(awk '/^#define DSHOT_BIDIRECTIONAL [01]$/ {print $3}' firmware/pico_copter/dshot_config.hpp)"
+          test "$selected_mode" = "0" || test "$selected_mode" = "1"
+          other_mode="$((1-selected_mode))"
+          cmake -S firmware/pico_copter -B build-opposite -G Ninja \
+            -DPICO_SDK_PATH="${PICO_SDK_PATH}" \
+            -DEIGEN3_INCLUDE_DIR="${EIGEN3_INCLUDE_DIR}" \
+            -DPICO_BOARD=pico -DDSHOT_BIDIRECTIONAL="$other_mode" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            2>&1 | tee configure-opposite.log
+          cmake --build build-opposite --target pico_copter --parallel "$(nproc)" \
+            2>&1 | tee build-opposite.log
+          test -s build-opposite/pico_copter.uf2
+
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -240,6 +264,8 @@ jobs:
             build.log
             configure-pico2.log
             build-pico2.log
+            configure-opposite.log
+            build-opposite.log
           if-no-files-found: warn
           retention-days: 1
 
@@ -285,12 +311,20 @@ jobs:
           if not speed_match:
               raise RuntimeError("DShot speed missing/invalid in dshot_config.hpp")
           rate_kbps = int(speed_match.group(1))
+          mode_match = re.search(r"(?m)^#define DSHOT_BIDIRECTIONAL ([01])\s*$", config_text)
+          if not mode_match:
+              raise RuntimeError("DShot mode missing/invalid in dshot_config.hpp")
+          bidirectional = mode_match.group(1) == "1"
+          mode_id = "bidir" if bidirectional else "oneway"
+          mode_ja = "双方向" if bidirectional else "単方向"
+          rx_ja = "eRPM受信あり" if bidirectional else "eRPM受信なし"
 
           manifest = {
               "appId": "pico_copter",
               "appName": "Pico Copter",
               "dshotRateKbps": rate_kbps,
-              "description": f"Raspberry Pi Pico (RP2040) 用の双方向DShot{rate_kbps} / eRPM実験版です。レベルシフタなしの専用回路で使用してください。",
+              "dshotMode": mode_id,
+              "description": f"Raspberry Pi Pico (RP2040) 用の{mode_ja}DShot{rate_kbps}（{rx_ja}）です。",
               "boardId": "pico",
               "boardName": "Raspberry Pi Pico",
               "file": "pico_copter.uf2",
@@ -314,7 +348,7 @@ jobs:
           # Preserve the original manifest.json/UF2 for first-generation Pico.
           manifest_pico2 = {
               **manifest,
-              "description": f"Pico 2 (RP2350)向け双方向DShot{rate_kbps}実験版です。今回の評価対象は初代Pico (RP2040) です。",
+              "description": f"Pico 2 (RP2350)向け{mode_ja}DShot{rate_kbps}（{rx_ja}）です。Pico 2での実機検証は未完了です。",
               "boardId": "pico2",
               "boardName": "Raspberry Pi Pico 2 (RP2350)",
               "file": "pico_copter_pico2.uf2",

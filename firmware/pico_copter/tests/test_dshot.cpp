@@ -21,6 +21,11 @@ int main() {
     static_assert(kRateKbps == 150u || kRateKbps == 300u ||
                   kRateKbps == 600u || kRateKbps == 1200u,
                   "Only supported DShot speeds");
+    static_assert(kOneWayPioCyclesPerBit == 8u, "One-way DShot 8 PIO cycles/bit");
+    static_assert(kOneWayPioClockHz == kBitRate * 8u,
+                  "One-way PIO clock follows selected rate");
+    static_assert(DSHOT_BIDIRECTIONAL == 0 || DSHOT_BIDIRECTIONAL == 1,
+                  "Protocol mode is strictly selected at compile time");
     assert(frame(0) == 0);
     assert(frame(48) == 0x0606);
     assert(frame(2047) == 0xFFEE);
@@ -65,6 +70,7 @@ int main() {
     }
     assert(pio_word(kStop) == 0);
     assert(pio_word(48) == 0x06060000u);
-    std::printf("DShot%u encoding/CRC, stop, throttle and PIO rate passed\n",
-                static_cast<unsigned int>(kRateKbps));
+    std::printf("DShot%u %s encoding/CRC, stop, throttle and PIO rate passed\n",
+                static_cast<unsigned int>(kRateKbps),
+                kBidirectional ? "bidir" : "oneway");
 }

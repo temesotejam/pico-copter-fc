@@ -1,5 +1,5 @@
 /*
- * Motor DShot300 GPIO mapping and telemetry diagnostics.
+ * Motor DShot GPIO mapping and optional bidirectional telemetry diagnostics.
  * Servo output and the 400 Hz scheduling timer still use hardware PWM.
  */
 #ifndef PWM_HPP
@@ -16,7 +16,7 @@
 #define DUTYMIN 1375
 #define DUTYMAX 2375
 
-// Actual motor signals use PIO DShot300; the servo remains PWM.
+// Motor signals use selected PIO DShot150/300/600/1200; servo remains PWM.
 // PWM_MAINLOOP_PIN identifies the internal PWM slice 7 timebase only.
 // Keep these GPIO numbers identical to the current I-26 control board.
 constexpr uint PWM_PIN_RL    = 2;
@@ -38,7 +38,8 @@ void set_duty_fl(float duty);
 void set_duty_rr(float duty);
 void set_duty_rl(float duty);
 
-// eRPM is diagnostic only: NEVER used by PID, EKF or motor mixing.
+// In one-way builds eRPM is always unavailable (fresh=false).
+// In bidirectional builds eRPM is diagnostic only: not used by PID/EKF/mixing.
 // Motor array order: FR, FL, RR, RL. fresh=1 with erpm=0 means a valid
 // stopped-motor response; fresh=0 means telemetry is unavailable/stale.
 struct DShotMotorTelemetry {
@@ -56,7 +57,7 @@ struct DShotMotorTelemetry {
     // actually queued into this channel's PIO TX FIFO.
     float requested_duty;
     uint16_t last_command; // 0=STOP; 48..2047=running
-    uint16_t last_frame;   // logical 16-bit bidirectional DShot packet
+    uint16_t last_frame;   // logical 16-bit selected-mode DShot packet
 };
 struct DShotTelemetrySnapshot {
     DShotMotorTelemetry motors[4];

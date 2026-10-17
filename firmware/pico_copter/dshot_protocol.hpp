@@ -8,7 +8,7 @@
 namespace dshot {
 // Rate and bidirectional PIO timing are configured in dshot_config.hpp.
 // This file handles frame/CRC encoding only. The old one-way frame helpers
-// below are retained for unit tests/history; they are NOT used for motor TX.
+// below are also used as the standard packet format in one-way builds.
 constexpr uint16_t kStop = 0;
 constexpr uint16_t kMinimumThrottle = 48;
 constexpr uint16_t kMaximumThrottle = 2047;
@@ -59,8 +59,8 @@ inline uint16_t throttle_from_legacy_duty(float duty) {
     return static_cast<uint16_t>(value + 0.5f);
 }
 
-// Retained for testing or restoring the older one-way DShot firmware.
-// The active bidirectional PIO uses bidirectional_pio_word(), NOT this helper.
+// This is the active frame-word helper in ONE-WAY builds.
+// Bidirectional builds use bidirectional_pio_word() instead.
 inline uint32_t pio_word(uint16_t command) {
     return static_cast<uint32_t>(frame(command)) << 16;
 }

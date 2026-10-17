@@ -64,6 +64,31 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 
 **注意:** RAMのため電源OFFでデータは消失します。新しいCH5 ONでも前の記録を上書きするため、必要なデータは再記録の前にPCへ取り出してください。実機での動作確認は必ずプロペラを外してください。
 
+## DShot通信方式の選択（プログラム内で指定）
+
+ファームウェアの [`firmware/pico_copter/dshot_config.hpp`](firmware/pico_copter/dshot_config.hpp) にある**2か所の設定**で、通信方式と速度を選びます。選択は**ビルド時に固定**され、実行中の自動切換えはありません。
+
+```cpp
+#ifndef DSHOT_RATE_KBPS
+#define DSHOT_RATE_KBPS 300      // 150 / 300 / 600 / 1200
+#endif
+
+#ifndef DSHOT_BIDIRECTIONAL
+#define DSHOT_BIDIRECTIONAL 1    // 1=双方向、0=単方向
+#endif
+```
+
+| 選択値 | ESCへの指令 | ESC返信とeRPM |
+|---|---|---|
+| `DSHOT_BIDIRECTIONAL=1`（初期値） | 反転信号・反転CRCの双方向DShot | 受信する。返信が欠けてもモータ指令は続ける |
+| `DSHOT_BIDIRECTIONAL=0` | 通常極性・通常CRCの単方向DShot | 受信しない。eRPMは常に無効 |
+
+単方向用の送信PIOは従来版を [`dshot_oneway.pio`](firmware/pico_copter/dshot_oneway.pio) に分離しました。双方向用の [`dshot_tx.pio`](firmware/pico_copter/dshot_tx.pio) は変更していません。モードの切換えでPID・EKF・SBUS・ミキサ・CH5ログ・サーボPWM・400 Hz制御周期は変わりません。
+
+ヘッダを編集せずにローカルビルドで一時的に選択する場合は、`-DDSHOT_BIDIRECTIONAL=0` または `1` をCMakeへ渡すこともできます。通常はヘッダを編集してGitHubへ反映するだけで、GitHub Actionsが**選択された1方式のUF2**を再ビルド・公開します。配布ページに通信方式を選ぶ操作はありません。既存のUF2のダウンロードURLは維持します。
+
+**検証状況：** 実機でeRPM取得を確認した構成は、初代Pico・双方向DShot300です。単方向PIOは過去のDShot300版の実装をもとにしていますが、今回統合した新しいファームウェアは**実機で再検証が必要**です。変更後は必ずプロペラを外して動作を確認してください。単方向時はeRPMを取得できず、USBログは`mode=oneway`、`valid=0`、`eRPM=-1`となります。
+
 ## DShot通信速度の切り替え（150 / 300 / 600 / 1200）
 
 **速度設定は1か所だけです。** [`firmware/pico_copter/dshot_config.hpp`](firmware/pico_copter/dshot_config.hpp) の次の行を書き換え、再ビルドしてください。
@@ -81,9 +106,9 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 | `600` | 600 kbit/s | 約26.7 µs | 24 MHz |
 | `1200` | 1200 kbit/s | 約13.3 µs | 48 MHz |
 
-この設定に連動して、PIOクロック分周比、約25 µsの送受信折り返し待ち、ESC返信開始を検出する約43 µsの待ち時間、USBシリアルの`#DShot150`/`#DShot300`等の表示が変わります。`dshot_tx.pio`の実機動作確認済み命令列は維持し、返信待ちの`SET Y`命令のみ（PIO起動前に）ビット速度に応じて調整します。
+双方向モードではこの設定に連動して、PIOクロック分周比、約25 µsの送受信折り返し待ち、ESC返信開始を検出する約43 µsの待ち時間、USBシリアルの`#DShot150`/`#DShot300`等の表示が変わります。`dshot_tx.pio`の実機動作確認済み命令列は維持し、返信待ちの`SET Y`命令のみ（PIO起動前に）ビット速度に応じて調整します。
 
-**どの速度でも双方向DShotです。** 400 Hzの制御・モータ指令更新周期、100 Hz姿勢制御、PID/EKF、スロットル範囲、フェイルセーフは変わりません。従来のeRPM取得実績があるのは**初代PicoのDShot300のみ**で、150/600/1200の実機通信・受信成功率は未確認です。ESCの対応速度を確認し、プロペラなしで波形・スロットル・eRPMを試してください。
+**どの速度でも、上記で選んだ通信方式が適用されます。** 400 Hzの制御・モータ指令更新周期、100 Hz姿勢制御、PID/EKF、スロットル範囲、フェイルセーフは変わりません。従来のeRPM取得実績があるのは**初代PicoのDShot300のみ**で、150/600/1200の実機通信・受信成功率は未確認です。ESCの対応速度を確認し、プロペラなしで波形・スロットル・eRPMを試してください。
 
 独立したビルドフォルダで速度を試す場合はソースを変更せず、`cmake -S firmware/pico_copter -B build-600 -DPICO_SDK_PATH=... -DPICO_BOARD=pico -DDSHOT_RATE_KBPS=600` でも指定できます。CMakeの指定値はヘッダ設定より優先します。通常のGitHub Actions/Pages公開ビルドはヘッダの値を使用し、配布ページの説明にもその速度を表示します。
 
@@ -109,9 +134,9 @@ SBUS受信安全処理（`firmware/pico_copter/sbus_parser.hpp`）を追加し�
 
 PIO0の4ステートマシンがモータ信号を扱い、PWMスライス7は出力ピンとは独立に400 Hzの制御周期を生成します。100 Hzの姿勢制御、PID・EKF・モータミキシング・SBUSフェイルセーフ・CH5の38項目リングログは維持しています。eRPMはUSB診断のみに使用します。
 
-### ESC返信を受信できない場合（双方向DShot300のまま継続）
+### 双方向モードでESC返信を受信できない場合
 
-**返信テレメトリは任意です。** 4モータのDShot指令は400 Hzの制御計算から送られ、eRPMの有無・数値はPID、EKF、アーム判定、モータミキシング、SBUSフェイルセーフに使っていません。
+**双方向モードでは返信テレメトリは任意です。** 4モータのDShot指令は400 Hzの制御計算から送られ、eRPMの有無・数値はPID、EKF、アーム判定、モータミキシング、SBUSフェイルセーフに使っていません。
 
 - ESC未接続・停止中の返信なし・一時的なCRC/GCRエラー・通信線のノイズの場合でも、**返信完了を待つブロッキング処理をせず、次の400 Hz指令送信を続けます**。
 - 正常なeRPMが250 ms以上来なければ、USBログの`valid=0`、`eRPM=-1`となるだけです。最後のeRPMを飛行制御に使用したり、返信がないだけで停止やアーム解除をしたりしません。

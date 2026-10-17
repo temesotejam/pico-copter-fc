@@ -7,8 +7,8 @@
 // DShot communication rate: change JUST THIS VALUE and rebuild the Pico UF2.
 //   150 = DShot150; 300 = DShot300 (RP2040 hardware-tested);
 //   600 = DShot600; 1200 = DShot1200 (higher rates need ESC/oscilloscope test).
-// This remains BIDIRECTIONAL DShot at every speed. It does NOT change the
-// 400 Hz motor update period or PID/EKF control loops.
+// DShot direction is set below: 1=bidirectional or 0=one-way. Neither
+// setting changes the 400 Hz motor update period or PID/EKF control.
 //
 // A build can optionally override this with -DDSHOT_RATE_KBPS=600.
 // ============================================================================
@@ -16,11 +16,24 @@
 #define DSHOT_RATE_KBPS 300
 #endif
 
+// Manually selected protocol. NO runtime auto-switching.
+//   1 = bidirectional DShot (inverted TX/CRC, ESC eRPM reply; default)
+//   0 = standard one-way DShot (normal TX/CRC, NO eRPM reply)
+// To change: edit just this value, rebuild, and flash the resulting UF2.
+// Alternatively pass -DDSHOT_BIDIRECTIONAL=0/1 to CMake.
+#ifndef DSHOT_BIDIRECTIONAL
+#define DSHOT_BIDIRECTIONAL 1
+#endif
+
+static_assert(DSHOT_BIDIRECTIONAL == 0 || DSHOT_BIDIRECTIONAL == 1,
+              "DSHOT_BIDIRECTIONAL must be 0 (one-way) or 1 (bidirectional).");
+
 static_assert(DSHOT_RATE_KBPS == 150 || DSHOT_RATE_KBPS == 300 ||
               DSHOT_RATE_KBPS == 600 || DSHOT_RATE_KBPS == 1200,
               "Unsupported DShot speed: choose 150, 300, 600, or 1200.");
 
 namespace dshot {
+constexpr bool kBidirectional = (DSHOT_BIDIRECTIONAL == 1);
 constexpr uint32_t kRateKbps = DSHOT_RATE_KBPS;
 constexpr uint32_t kBitRate = kRateKbps * 1000u;
 
@@ -29,6 +42,9 @@ constexpr uint32_t kBitRate = kRateKbps * 1000u;
 // Keep it at 40: PIO CLKDIV, TX, and RX all scale with kBitRate.
 constexpr uint32_t kPioCyclesPerBit = 40;
 constexpr uint32_t kPioClockHz = kBitRate * kPioCyclesPerBit;
+// Proven conventional DShot PIO: 8 cycles/bit, non-inverted TX only.
+constexpr uint32_t kOneWayPioCyclesPerBit = 8;
+constexpr uint32_t kOneWayPioClockHz = kBitRate * kOneWayPioCyclesPerBit;
 
 // Host sends this loop count into the second PIO TX word. PIO executes
 // roughly one iteration per clock; integer values for all four speeds.

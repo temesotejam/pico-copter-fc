@@ -23,12 +23,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 pico_sdk_init()
 
-# Optional build override: -DDSHOT_RATE_KBPS=600
+# Optional build override: -DDSHOT_RATE_KBPS=600 and/or -DDSHOT_BIDIRECTIONAL=0
 # Empty (default) uses one editable value in dshot_config.hpp: 300.
 set(DSHOT_RATE_KBPS "" CACHE STRING "Override DShot speed in kbps (150, 300, 600, 1200); empty = dshot_config.hpp")
 if(NOT DSHOT_RATE_KBPS STREQUAL "" AND
    NOT DSHOT_RATE_KBPS MATCHES "^(150|300|600|1200)$")
     message(FATAL_ERROR "DSHOT_RATE_KBPS must be empty, 150, 300, 600, or 1200")
+endif()
+
+# Fixed one-way or bidirectional firmware mode (NO runtime auto-switch).
+# Empty uses dshot_config.hpp (default = bidirectional).
+set(DSHOT_BIDIRECTIONAL "" CACHE STRING "Override DShot mode: 1=bidir, 0=one-way; empty=header default")
+if(NOT DSHOT_BIDIRECTIONAL STREQUAL "" AND
+   NOT DSHOT_BIDIRECTIONAL MATCHES "^[01]$")
+    message(FATAL_ERROR "DSHOT_BIDIRECTIONAL must be empty, 0, or 1")
 endif()
 
 # Eigen can be supplied locally for offline/reproducible builds. If omitted,
@@ -70,6 +78,9 @@ add_executable(pico_copter
 if(NOT DSHOT_RATE_KBPS STREQUAL "")
     target_compile_definitions(pico_copter PRIVATE DSHOT_RATE_KBPS=${DSHOT_RATE_KBPS})
 endif()
+if(NOT DSHOT_BIDIRECTIONAL STREQUAL "")
+    target_compile_definitions(pico_copter PRIVATE DSHOT_BIDIRECTIONAL=${DSHOT_BIDIRECTIONAL})
+endif()
 
 target_include_directories(pico_copter PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -87,6 +98,7 @@ target_link_libraries(pico_copter PRIVATE
 )
 
 pico_generate_pio_header(pico_copter ${CMAKE_CURRENT_LIST_DIR}/dshot_tx.pio)
+pico_generate_pio_header(pico_copter ${CMAKE_CURRENT_LIST_DIR}/dshot_oneway.pio)
 
 pico_enable_stdio_usb(pico_copter 1)
 pico_enable_stdio_uart(pico_copter 0)

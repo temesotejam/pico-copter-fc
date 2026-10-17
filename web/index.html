@@ -12,14 +12,14 @@
     <header>
       <p class="eyebrow">Raspberry Pi Pico / Pico 2</p>
       <h1>Pico Copter UF2 Builder</h1>
-      <p>現在は初代Pico（RP2040）で双方向DShot300を試験しています。Pico 2用UF2も引き続き配布しますが、実機試験では初代Picoを選択してください。</p>
+      <p>送信方式（双方向・単方向）と通信速度はファームウェア内の dshot_config.hpp で設定します。このページではビルド済みUF2と適用された設定を表示します。</p>
     </header>
 
     <section class="card">
       <h2>最新ビルド</h2>
       <p><label for="board-choice">対象の基板：</label>
         <select id="board-choice" aria-label="UF2の対象基板">
-          <option value="pico" selected>Raspberry Pi Pico（RP2040）― 双方向DShot300試験</option>
+          <option value="pico" selected>Raspberry Pi Pico（RP2040）</option>
           <option value="pico2">Raspberry Pi Pico 2（RP2350）</option>
         </select></p>
       <p id="status">ビルド情報を取得しています…</p>

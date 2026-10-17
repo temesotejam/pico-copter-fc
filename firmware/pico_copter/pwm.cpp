@@ -1,15 +1,15 @@
 /*
- * Configurable bidirectional DShot / eRPM on Raspberry Pi Pico (RP2040).
+ * Build-time selected bidirectional/one-way DShot on Pico (RP2040).
  * Direct connection to ESC signal, without a one-way level shifter.
  *
- * The 400 Hz IRQ computes motor commands, then queues bidirectional
- * frames. The previous cycle's eRPM replies are read WITHOUT
- * waiting for the ESC. Telemetry is USB diagnostics only, never feedback
- * for PID, EKF or the motor mixer.
+ * The 400 Hz IRQ computes the same motor commands and queues DShot frames.
+ * Bidirectional mode: unchanged proven PIO TX/RX and optional eRPM replies.
+ * One-way mode: standard non-inverted CRC and TX-only PIO; no reply handling.
+ * Selection is compile-time only. No automatic protocol switching.
+ * eRPM is diagnostic only, never used for PID/EKF/motor mixing.
  *
- * PIO TX/RX timing is identical to the verified 2026-10-16 RP2040
- * baseline. Missing, malformed or delayed ESC replies never affect motor
- * commands. This is always BIDIRECTIONAL DShot (not a protocol fallback).
+ * Bidirectional PIO TX/RX source/timing is preserved from the confirmed
+ * 2026-10-16 RP2040 DShot300 baseline. Missing telemetry does not gate TX.
  *
  * TX/RX PIO program adapted from simonwunderlich/pio-dshot (MIT):
  * https://github.com/simonwunderlich/pio-dshot
@@ -18,6 +18,7 @@
 #include "dshot_protocol.hpp"
 #include "dshot_bidir_decode.hpp"
 #include "dshot_tx.pio.h"
+#include "dshot_oneway.pio.h"
 #include "hardware/pio.h"
 #include "hardware/pio_instructions.h"
 #include "hardware/clocks.h"
@@ -117,6 +118,37 @@ void init_bidir_dshot() {
     dshot_ready = true;
 }
 
+// Conventional one-way PIO from the earlier proven implementation.
+// It is selected ONLY at compile time; the bidirectional setup above is
+// intentionally left untouched for the default build.
+void init_oneway_dshot() {
+    const uint offset = pio_add_program(dshot_pio, &dshot_oneway_program);
+    const float divisor = static_cast<float>(clock_get_hz(clk_sys)) /
+                          static_cast<float>(dshot::kOneWayPioClockHz);
+    if (divisor < 1.0f || divisor >= 65536.0f)
+        panic("One-way DShot speed unsupported by Pico system clock");
+    for (uint i = 0; i < MOTOR_COUNT; ++i) {
+        const uint sm = pio_claim_unused_sm(dshot_pio, true);
+        const uint pin = MOTOR_PINS[i];
+        sm_for_motor[i] = sm;
+        pio_sm_config cfg = dshot_oneway_program_get_default_config(offset);
+        sm_config_set_sideset_pins(&cfg, pin);
+        sm_config_set_out_shift(&cfg, false, true, 16);
+        sm_config_set_fifo_join(&cfg, PIO_FIFO_JOIN_TX);
+        sm_config_set_clkdiv(&cfg, divisor);
+        pio_gpio_init(dshot_pio, pin);
+        pio_sm_init(dshot_pio, sm, offset, &cfg);
+        // The side-set PIO program drives idle LOW (as the old one-way
+        // firmware did). Do not call pio_sm_set_pins() here: its SET
+        // pin mapping is intentionally unused by this PIO program.
+        pio_sm_set_consecutive_pindirs(dshot_pio, sm, pin, 1, true);
+    }
+    for (uint i = 0; i < MOTOR_COUNT; ++i)
+        pio_sm_set_enabled(dshot_pio, sm_for_motor[i], true);
+    dshot_ready = true;
+}
+
+#if DSHOT_BIDIRECTIONAL
 // This runs once per 400 Hz tick, never blocking on a missing reply.
 // Drain every motor's RX FIFO, including channels whose previous TX was
 // skipped. Otherwise a late/unpaired response could remain indefinitely
@@ -157,10 +189,13 @@ void collect_previous_telemetry() {
     }
 }
 
+#endif // DSHOT_BIDIRECTIONAL
+
 void start_next_exchange() {
     if (!dshot_ready) return;
     for (uint i = 0; i < MOTOR_COUNT; ++i) {
         const uint sm = sm_for_motor[i];
+#if DSHOT_BIDIRECTIONAL
         // Ignore and drain any unpaired late RX data before queuing TX.
         // DShot replies are optional and cannot hold up the output path.
         for (uint j = 0; j < 4u && !pio_sm_is_rx_fifo_empty(dshot_pio, sm); ++j) {
@@ -180,6 +215,22 @@ void start_next_exchange() {
         telemetry[i].last_command = throttle;
         telemetry[i].last_frame = dshot::bidirectional_frame(throttle);
         motor_sent[i] = true;
+#else
+        // No RX in one-way DShot. Keep motor commands non-blocking, and
+        // discard queued stale commands so a later STOP cannot queue behind
+        // older throttle values, as in the previous one-way implementation.
+        if (!pio_sm_is_tx_fifo_empty(dshot_pio, sm)) {
+            pio_sm_clear_fifos(dshot_pio, sm);
+            ++telemetry[i].tx_busy;
+        }
+        const uint16_t throttle =
+            dshot::throttle_from_legacy_duty(requested_duty[i]);
+        pio_sm_put(dshot_pio, sm, dshot::pio_word(throttle));
+        ++telemetry[i].tx;
+        telemetry[i].last_command = throttle;
+        telemetry[i].last_frame = dshot::frame(throttle);
+        motor_sent[i] = false;
+#endif
     }
 }
 
@@ -188,7 +239,9 @@ void pwm_wrap_irq_handler() {
     // Existing 400Hz motor and SBUS/failsafe calculations run unchanged.
     MAINLOOP();
     // Read the previous cycle's RX FIFO only; do not wait for the ESC.
+#if DSHOT_BIDIRECTIONAL
     collect_previous_telemetry();
+#endif
     start_next_exchange();
 }
 } // namespace
@@ -212,8 +265,12 @@ DShotTelemetrySnapshot dshot_telemetry_snapshot(void) {
         dest.requested_duty = requested_duty[i];
         dest.last_command = s.last_command;
         dest.last_frame = s.last_frame;
+#if DSHOT_BIDIRECTIONAL
         dest.fresh = s.rx_ok != 0 &&
                      static_cast<uint32_t>(now_us - s.last_good_us) <= ERPM_STALE_US;
+#else
+        dest.fresh = false; // No ESC eRPM feedback in one-way mode.
+#endif
     }
     restore_interrupts(saved);
     return result;
@@ -243,7 +300,11 @@ void pwm_init() {
     pwm_set_clkdiv(servo_slice, pwm_clkdiv);
     pwm_set_gpio_level(PWM_PIN_SERVO, SERVO_INITIAL_LEVEL);
 
+#if DSHOT_BIDIRECTIONAL
     init_bidir_dshot();
+#else
+    init_oneway_dshot();
+#endif
 
     pwm_set_wrap(mainloop_slice, PWM_WRAP);
     pwm_set_clkdiv(mainloop_slice, pwm_clkdiv);

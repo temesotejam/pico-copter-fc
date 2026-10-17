@@ -18,8 +18,9 @@ void startup_countdown(int seconds_remaining) {
 
 void startup_complete() {
     printf("\n");
-    printf("#DShot CONFIG rate=%lu kbps mode=bidir control=400Hz\n",
-           static_cast<unsigned long>(dshot::kRateKbps));
+    printf("#DShot CONFIG rate=%lu kbps mode=%s control=400Hz\n",
+           static_cast<unsigned long>(dshot::kRateKbps),
+           dshot::kBidirectional ? "bidir" : "oneway");
 }
 
 void sensor_not_found() {
@@ -172,11 +173,12 @@ void poll() {
             const uint32_t success_percent = m.tx
                 ? static_cast<uint32_t>((static_cast<uint64_t>(m.rx_ok) * 100u) / m.tx)
                 : 0u;
-            printf("#DShot%lu %s mode=bidir duty=%.3f cmd=%u pkt=0x%04x "
+            printf("#DShot%lu %s mode=%s duty=%.3f cmd=%u pkt=0x%04x "
                    "eRPM=%ld valid=%u rx=%lu/%lu (%lu%%) "
                    "timeout=%lu gcr=%lu crc=%lu other=%lu stray=%lu busy=%lu\n",
                    static_cast<unsigned long>(dshot::kRateKbps),
-                   names[i], static_cast<double>(m.requested_duty),
+                   names[i], dshot::kBidirectional ? "bidir" : "oneway",
+                   static_cast<double>(m.requested_duty),
                    static_cast<unsigned int>(m.last_command),
                    static_cast<unsigned int>(m.last_frame),
                    m.fresh ? static_cast<long>(m.erpm) : -1L,
