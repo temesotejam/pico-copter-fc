@@ -5,15 +5,15 @@
 
 // ============================================================================
 // DShot communication rate: change JUST THIS VALUE and rebuild the Pico UF2.
-//   150 = DShot150; 300 = DShot300 (RP2040 hardware-tested);
+//   150 = DShot150 (selected); 300 = DShot300 (RP2040 hardware-tested);
 //   600 = DShot600; 1200 = DShot1200 (higher rates need ESC/oscilloscope test).
 // DShot direction is set below: 1=bidirectional or 0=one-way. Neither
 // setting changes the 400 Hz motor update period or PID/EKF control.
 //
-// A build can optionally override this with -DDSHOT_RATE_KBPS=600.
+// A build can optionally override this with -DDSHOT_RATE_KBPS=300.
 // ============================================================================
 #ifndef DSHOT_RATE_KBPS
-#define DSHOT_RATE_KBPS 300
+#define DSHOT_RATE_KBPS 150
 #endif
 
 // Manually selected protocol. NO runtime auto-switching.
